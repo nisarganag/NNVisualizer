@@ -4,7 +4,7 @@ Checked on 2026-11-19.
 
 ## Automated checks
 
-The final `npm run check` passes with **11 unit/reference/state tests and 16 Chromium browser tests**, plus TypeScript checking and the Vite production build. The complete redesigned application was verified on Node.js 24.22.3 (matching the recommended Vercel major version) on macOS arm64. Development and earlier browser checks also ran on Node.js 26.13.1.
+The final `npm run check` passes with **11 unit/reference/state tests and 18 Chromium browser tests**, plus TypeScript checking and the Vite production build, on Node.js 26.13.1 (macOS arm64). The previous studio version was also verified on Node.js 24.22.3, matching the recommended Vercel major version; the theme and motion changes add no Node-specific code and were not re-run on 24.
 
 - The reference fixture compares training/test losses and selected parameters at epochs 0, 1, and 10 against values independently captured from the live TensorFlow Playground, to 12 decimal places.
 - Engine checks cover a hand-calculated gradient update, partial batches across epochs, parameter edits, data replacement, zero-input models, and numerical divergence.
@@ -22,6 +22,15 @@ The original reference-like interface was replaced with the studio design reques
 The initial independent review found a classroom visibility issue during graph redraws; that and the related accessibility state loss were fixed and regression-tested. The redesign received a separate independent review. Its touch-editor, wordmark-navigation, and classroom-link findings were reproduced with failing browser tests, fixed, and verified by the complete passing suite. Lesson color terminology, legend scaling, and the hidden-guide footer were also corrected. No identified issue was left deferred.
 
 Independent browser checks additionally covered denied clipboard access, a bias-only model with no visible inputs, all 49 bias hit targets in a six-layer network, and document/control bounds at eleven widths from 320px through 1440px. Earlier checks confirmed eight queued clicks produce eight epochs and rapid reset sequences reject stale snapshots.
+
+## Themes and motion
+
+The light/dark redesign was checked the same day against the production build.
+
+- Signal colors were validated per theme with an OKLab color-vision check (protanopia and deuteranopia simulation). Violet/amber separation is ΔE 31.9 (light) and 27.4 (dark), against a target of at least 8. Both poles clear 3:1 contrast on their surfaces: light 5.2–5.5 (violet) and 3.3–3.6 (amber); dark 6.7–7.5 and 8.0–8.9. The dark poles sit above the categorical lightness band by design, so hairline connections and small points stay visible on the near-black stage.
+- Browser tests cover following the system theme, switching without resetting the experiment or URL, repainting the heatmap, thumbnails and connections, remembering the choice after reload, and reduced motion (no running animations after a structural edit or a theme switch). The neuron-inspection test also checks connection highlighting and typeset input names.
+- Layouts were inspected in both themes at 1440 × 1000 and 390 × 844, plus mid-animation frames of the load sequence, a layer addition, and the theme reveal. Twelve widths from 320px to 1920px produce no horizontal page overflow.
+- Production loads without a flash of unstyled controls, and new connections render at their final width without load-time transitions.
 
 ## Scope
 

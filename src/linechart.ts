@@ -14,7 +14,8 @@ limitations under the License.
 ==============================================================================*/
 
 import * as d3 from 'd3';
-// NNVisualizer: responsive SVG view box and studio stroke treatment.
+// NNVisualizer: responsive SVG view box, monotone curves, and per-series CSS
+// classes so each theme styles the lines without repainting.
 
 type DataPoint = {
   x: number;
@@ -32,14 +33,13 @@ export class AppendingLineChart {
   private xScale;
   private yScale;
   private paths;
-  private lineColors: string[];
 
   private minY = Number.MAX_VALUE;
   private maxY = Number.MIN_VALUE;
 
-  constructor(container, lineColors: string[]) {
-    this.lineColors = lineColors;
-    this.numLines = lineColors.length;
+  /** Each series name becomes a `line-<name>` class on its path. */
+  constructor(container, seriesNames: string[]) {
+    this.numLines = seriesNames.length;
     let node = container.node() as HTMLElement;
     let totalWidth = node.offsetWidth;
     let totalHeight = node.offsetHeight;
@@ -66,15 +66,7 @@ export class AppendingLineChart {
     this.paths = new Array(this.numLines);
     for (let i = 0; i < this.numLines; i++) {
       this.paths[i] = this.svg.append("path")
-        .attr("class", "line")
-        .style({
-          "fill": "none",
-          "stroke": lineColors[i],
-          "stroke-width": "1.8px",
-          'stroke-linejoin': 'round',
-          'stroke-linecap': 'round',
-          'vector-effect': 'non-scaling-stroke'
-        });
+        .attr("class", `line line-${seriesNames[i]}`);
     }
   }
 
@@ -105,6 +97,7 @@ export class AppendingLineChart {
     // Adjust all the <path> elements (lines).
     let getPathMap = (lineIndex: number) => {
       return d3.svg.line<{x: number, y:number}>()
+      .interpolate("monotone")
       .x(d => this.xScale(d.x))
       .y(d => this.yScale(d.y[lineIndex]));
     };

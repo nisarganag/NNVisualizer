@@ -32,19 +32,26 @@ import seedrandom from 'seedrandom';
 import { INPUT_FEATURES } from './features';
 import { applyModel, captureModel } from './model-state';
 import type { Matrix, NetworkConfig, WorkerCommand, WorkerResponse } from './worker-protocol';
-import { SIGNAL_COLORS, LOSS_COLORS } from './palette';
+import { signalRange, THEME_CHANGE_EVENT } from './palette';
 import { icon } from './studio';
 
 // NNVisualizer modifications: worker-driven training; original studio layout,
-// centered circular graph, shared colors, accessible controls and safe editing.
+// centered circular graph, themed colors, typeset feature labels, graph motion,
+// accessible controls and safe editing.
 
 let mainWidth;
+
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const EASE_OUT = 'cubic-bezier(.22, 1, .36, 1)';
+const EASE_SPRING = 'cubic-bezier(.34, 1.4, .64, 1)';
 
 const RECT_SIZE = 36;
 const BIAS_SIZE = 8;
 const NUM_SAMPLES_CLASSIFY = 500;
 const NUM_SAMPLES_REGRESS = 1200;
 const DENSITY = 100;
+/** Neuron previews average the 100×100 grid into 25×25 cells for smooth, small heatmaps. */
+const NODE_DENSITY = 25;
 
 enum HoverType {
   BIAS, WEIGHT
@@ -140,10 +147,15 @@ let linkWidthScale = d3.scale.linear()
   .domain([0, 5])
   .range([0.65, 4])
   .clamp(true);
-let colorScale = d3.scale.linear<string, number>()
-                     .domain([-1, 0, 1])
-                     .range(SIGNAL_COLORS)
-                     .clamp(true);
+/** Maps signed values to the active theme's colors, interpolated perceptually. */
+function buildColorScale() {
+  return d3.scale.linear<string, string>()
+    .domain([-1, 0, 1])
+    .range(signalRange())
+    .interpolate(d3.interpolateLab)
+    .clamp(true);
+}
+let colorScale = buildColorScale();
 let iter = 0;
 let trainData: Example2D[] = [];
 let testData: Example2D[] = [];
@@ -151,7 +163,7 @@ let network: nn.Node[][] = null;
 let lossTrain = 0;
 let lossTest = 0;
 let player = new Player();
-let lineChart = new AppendingLineChart(d3.select("#linechart"), LOSS_COLORS);
+let lineChart = new AppendingLineChart(d3.select("#linechart"), ['train', 'test']);
 
 let lastChartEpoch = -1;
 let generation = 0;
@@ -161,9 +173,11 @@ let queuedSteps = 0;
 let editingParameter = false;
 const trainingWorker = new Worker(new URL('./training.worker.ts', import.meta.url), { type: 'module' });
 
-function setStatus(message: string) {
+/** Info messages appear only if work takes noticeable time; errors appear at once. */
+function setStatus(message: string, kind: 'info' | 'error' = 'error') {
   const element = document.querySelector<HTMLElement>('#simulation-status');
   element.textContent = message;
+  element.dataset.kind = kind;
   element.hidden = !message;
 }
 
@@ -238,9 +252,10 @@ function syncAccessibility() {
       });
   }
   state.networkShape.forEach((count, index) => {
+    // Each stepper reads remove, then add, matching its visual order.
     const buttons = d3.select(`.ui-numNodes${index + 1}`).selectAll('button');
-    buttons.attr('aria-label', (_d, i) => `${i === 0 ? 'Add' : 'Remove'} a neuron ${i === 0 ? 'to' : 'from'} layer ${index + 1}`)
-      .property('disabled', (_d, i) => i === 0 ? count >= 8 : count <= 1);
+    buttons.attr('aria-label', (_d, i) => i === 0 ? `Remove a neuron from layer ${index + 1}` : `Add a neuron to layer ${index + 1}`)
+      .property('disabled', (_d, i) => i === 0 ? count <= 1 : count >= 8);
   });
   initiallyHiddenProps.forEach(prop => d3.selectAll(`.ui-${prop}`).style('display', 'none'));
 }
@@ -470,6 +485,8 @@ function updateBiasesUI(network: nn.Node[][]) {
 }
 
 function updateWeightsUI(network: nn.Node[][], container) {
+  // While training, CSS animates the signal flow continuously; weight changes
+  // ease in through stroke transitions instead of jumping each epoch.
   for (let layerIdx = 1; layerIdx < network.length; layerIdx++) {
     let currentLayer = network[layerIdx];
     // Update all the nodes in this layer.
@@ -479,7 +496,6 @@ function updateWeightsUI(network: nn.Node[][], container) {
         let link = node.inputLinks[j];
         container.select(`#link${link.source.id}-${link.dest.id}`)
             .style({
-              "stroke-dashoffset": -iter / 3,
               "stroke-width": linkWidthScale(Math.abs(link.weight)),
               "stroke": colorScale(link.weight)
             })
@@ -489,8 +505,43 @@ function updateWeightsUI(network: nn.Node[][], container) {
   }
 }
 
+const SUBSCRIPT_DIGITS = '₀₁₂₃₄₅₆₇₈₉';
+const SUPERSCRIPT_DIGITS = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+
+/** A feature label such as "sin(X_1)" as plain text: "sin(x₁)". */
+function plainFeatureLabel(label: string): string {
+  return label.toLowerCase()
+    .replace(/_(\d)/g, (_match, digit) => SUBSCRIPT_DIGITS[+digit])
+    .replace(/\^(\d)/g, (_match, digit) => SUPERSCRIPT_DIGITS[+digit]);
+}
+
+/** Typesets a feature label as math: italic variables, upright functions, true scripts. */
+function appendMathLabel(text, label: string): void {
+  const tokens = label.toLowerCase().match(/sin|cos|[a-z]|[_^]\d|[^a-z_^]+/g) ?? [label];
+  let shift = 0;
+  for (const token of tokens) {
+    const script = token[0] === '_' || token[0] === '^';
+    // Offsets in user units, so they stay consistent across font sizes.
+    const target = token[0] === '_' ? 4 : token[0] === '^' ? -6 : 0;
+    const tspan = text.append('tspan').text(script ? token.slice(1) : token);
+    if (target !== shift) {
+      tspan.attr('dy', target - shift);
+      shift = target;
+    }
+    if (script) tspan.attr('class', 'math-script');
+    else if (/^[a-z]$/.test(token)) tspan.attr('class', 'math-var');
+  }
+}
+
+/** Highlights the connections into and out of a neuron, dimming the rest. */
+function highlightConnections(nodeId: string | null): void {
+  d3.select('#network').classed('inspecting', nodeId != null);
+  d3.selectAll('#network path.link').classed('related', (link: nn.Link) =>
+    nodeId != null && link != null && (link.source.id === nodeId || link.dest.id === nodeId));
+}
+
 function drawNode(cx: number, cy: number, nodeId: string, isInput: boolean,
-    container, node?: nn.Node) {
+    container, column: number, node?: nn.Node) {
   let x = cx - RECT_SIZE / 2;
   let y = cy - RECT_SIZE / 2;
 
@@ -498,6 +549,7 @@ function drawNode(cx: number, cy: number, nodeId: string, isInput: boolean,
     .attr({
       "class": "node",
       "id": `node${nodeId}`,
+      "data-column": column,
       "transform": `translate(${x},${y})`
     });
 
@@ -517,32 +569,10 @@ function drawNode(cx: number, cy: number, nodeId: string, isInput: boolean,
     // Draw the input label.
     let text = nodeGroup.append("text").attr({
       class: "main-label",
-      x: -10,
+      x: -12,
       y: RECT_SIZE / 2, "text-anchor": "end"
     });
-    if (/[_^]/.test(label)) {
-      let myRe = /(.*?)([_^])(.)/g;
-      let myArray;
-      let lastIndex;
-      while ((myArray = myRe.exec(label)) != null) {
-        lastIndex = myRe.lastIndex;
-        let prefix = myArray[1];
-        let sep = myArray[2];
-        let suffix = myArray[3];
-        if (prefix) {
-          text.append("tspan").text(prefix);
-        }
-        text.append("tspan")
-        .attr("baseline-shift", sep === "_" ? "sub" : "super")
-        .style("font-size", "9px")
-        .text(suffix);
-      }
-      if (label.substring(lastIndex)) {
-        text.append("tspan").text(label.substring(lastIndex));
-      }
-    } else {
-      text.append("tspan").text(label);
-    }
+    appendMathLabel(text, label);
     nodeGroup.classed(activeOrNotClass, true);
   }
   if (!isInput) {
@@ -565,7 +595,8 @@ function drawNode(cx: number, cy: number, nodeId: string, isInput: boolean,
   let div = d3.select("#network").insert("div", ":first-child")
     .attr({
       "id": `canvas-${nodeId}`,
-      "class": "canvas"
+      "class": "canvas",
+      "data-column": column
     })
     .style({
       position: "absolute",
@@ -576,13 +607,15 @@ function drawNode(cx: number, cy: number, nodeId: string, isInput: boolean,
       selectedNodeId = nodeId;
       div.classed("hovered", true);
       nodeGroup.classed("hovered", true);
+      highlightConnections(nodeId);
       if (boundary[nodeId]) heatMap.updateBackground(boundary[nodeId], state.discretize);
-      d3.select('#inspection-label').text(isInput ? INPUTS[nodeId].label.replaceAll('_', '') : nodeId === nn.getOutputNode(network).id ? 'Output' : `Neuron ${nodeId}`);
+      d3.select('#inspection-label').text(isInput ? `Input ${plainFeatureLabel(INPUTS[nodeId].label)}` : nodeId === nn.getOutputNode(network).id ? 'Output' : `Neuron ${nodeId}`);
     })
     .on("mouseleave", function() {
       selectedNodeId = null;
       div.classed("hovered", false);
       nodeGroup.classed("hovered", false);
+      highlightConnections(null);
       const outputGrid = boundary[nn.getOutputNode(network).id];
       if (outputGrid) heatMap.updateBackground(outputGrid, state.discretize);
       d3.select('#inspection-label').text('Output');
@@ -603,43 +636,128 @@ function drawNode(cx: number, cy: number, nodeId: string, isInput: boolean,
   }
   div.on('focus', function() { div.on('mouseenter').call(this); })
     .on('blur', function() { div.on('mouseleave').call(this); });
-  let nodeHeatMap = new HeatMap(RECT_SIZE, DENSITY / 10, xDomain,
+  let nodeHeatMap = new HeatMap(RECT_SIZE, NODE_DENSITY, xDomain,
       xDomain, div, {noSvg: true});
   div.datum({heatmap: nodeHeatMap, id: nodeId});
 
+}
+
+/** The drawn structure: node ids per layer plus which inputs are switched on. */
+let drawnTopology = '';
+function topologyOf(network: nn.Node[][]): string {
+  return network.map(layer => layer.map(node => node.id).join(',')).join('|') +
+    '#' + Object.keys(INPUTS).map(id => state[id] ? 1 : 0).join('');
+}
+
+type Placement = Map<string, DOMRect>;
+/** Where each node and layer control currently appears, including any running animation. */
+function measurePlacement(root: HTMLElement): Placement {
+  const placement: Placement = new Map();
+  root.querySelectorAll<HTMLElement>('div.canvas, div.plus-minus-neurons, div.layer-label')
+    .forEach(element => placement.set(element.id || element.dataset.layer, element.getBoundingClientRect()));
+  return placement;
+}
+
+/**
+ * The first draw wires the network up column by column. Later structural edits
+ * glide surviving neurons to their new places and fade the rewired connections in.
+ * Redraws that keep the structure (resizes, sliders, theme changes) stay still.
+ */
+function animateNetwork(motion: 'enter' | 'rewire', root: HTMLElement, before: Placement): void {
+  const elements = Array.from(root.querySelectorAll<HTMLElement>('div.canvas, div.plus-minus-neurons, div.layer-label'));
+  if (motion === 'enter') {
+    elements.forEach(element => {
+      const column = Number(element.dataset.column ?? 0);
+      if (element.classList.contains('canvas')) {
+        element.animate([{ opacity: 0, transform: 'scale(.3)' }, { opacity: 1, transform: 'none' }],
+          { duration: 620, delay: 80 + column * 90, easing: EASE_SPRING, fill: 'backwards' });
+      } else {
+        element.animate([{ opacity: 0 }, { opacity: 1 }],
+          { duration: 500, delay: 160 + column * 90, easing: EASE_OUT, fill: 'backwards' });
+      }
+    });
+    root.querySelectorAll<SVGPathElement>('path.link').forEach(path => {
+      const length = Math.ceil(path.getTotalLength()) + 1;
+      const column = Number(path.dataset.column ?? 0);
+      path.animate([
+        { strokeDasharray: `${length} ${length}`, strokeDashoffset: length },
+        { strokeDasharray: `${length} ${length}`, strokeDashoffset: 0 },
+      ], { duration: 760, delay: 180 + column * 90, easing: EASE_OUT, fill: 'backwards' });
+    });
+    // Labels and bias squares arrive with their neurons rather than ahead of them.
+    root.querySelectorAll<SVGElement>('#svg g.node, #svg .output-label').forEach(element => {
+      element.animate([{ opacity: 0 }, { opacity: 1 }],
+        { duration: 420, delay: 200 + Number(element.dataset.column ?? 0) * 90, easing: EASE_OUT, fill: 'backwards' });
+    });
+    return;
+  }
+  // Read every new position before starting animations to avoid repeated layout.
+  const after = elements.map(element => [element, element.getBoundingClientRect()] as const);
+  for (const [element, bounds] of after) {
+    const previous = before.get(element.id || element.dataset.layer);
+    const centered = element.classList.contains('canvas') ? '' : 'translateX(-50%) ';
+    if (!previous) {
+      element.animate(element.classList.contains('canvas')
+        ? [{ opacity: 0, transform: 'scale(.3)' }, { opacity: 1, transform: 'none' }]
+        : [{ opacity: 0 }, { opacity: 1 }],
+        { duration: 460, delay: 60, easing: EASE_SPRING, fill: 'backwards' });
+      continue;
+    }
+    const dx = previous.left - bounds.left;
+    const dy = previous.top - bounds.top;
+    if (Math.abs(dx) < .5 && Math.abs(dy) < .5) continue;
+    element.animate([
+      { transform: `${centered}translate(${dx}px, ${dy}px)` },
+      { transform: centered || 'none' },
+    ], { duration: 520, easing: EASE_OUT });
+  }
+  // Connections, bias squares and the output label settle in once neurons are nearly in place.
+  // Input labels never move, so they stay put.
+  root.querySelectorAll<SVGElement>('#svg g.links, #svg g.node:not([data-column="0"]), #svg .output-label')
+    .forEach(element => element.animate([{ opacity: 0 }, { opacity: 1 }],
+      { duration: 360, delay: 160, easing: 'ease-out', fill: 'backwards' }));
 }
 
 // Draw network
 function drawNetwork(network: nn.Node[][]): void {
   if (!network) return;
   const root = document.querySelector<HTMLElement>('#network');
+  const topology = topologyOf(network);
+  const motion = reducedMotion.matches || topology === drawnTopology ? null
+    : drawnTopology === '' ? 'enter' : 'rewire';
+  const before = motion === 'rewire' ? measurePlacement(root) : new Map();
+  drawnTopology = topology;
   const width = root.clientWidth;
   mainWidth = width;
   const svg = d3.select('#svg');
   svg.select('g.core').remove();
-  d3.select('#network').selectAll('div.canvas, div.plus-minus-neurons, div.layer-label').remove();
+  d3.select('#network').classed('inspecting', false)
+    .selectAll('div.canvas, div.plus-minus-neurons, div.layer-label').remove();
 
   const inputIds = Object.keys(INPUTS);
   const rows = Math.max(inputIds.length, ...network.map(layer => layer.length), 1);
   const rowGap = 44;
-  const top = 84;
-  const height = top + (rows - 1) * rowGap + RECT_SIZE + 22;
+  const top = 96;
+  const height = top + (rows - 1) * rowGap + RECT_SIZE + 26;
   root.style.height = `${height}px`;
   svg.attr({ width, height });
   const container = svg.append('g').attr('class', 'core').attr('transform', 'translate(3,3)');
+  // Connections sit beneath their hit targets and the nodes.
+  const linkLayer = container.append('g').attr('class', 'links');
   const coordinates: Record<string, { cx: number; cy: number }> = {};
-  const inputX = 67;
-  const outputX = width - 40;
+  const inputX = 72;
+  const outputX = width - 44;
   const layerX = (index: number) => inputX + (outputX - inputX) * index / (network.length - 1);
   const nodeY = (count: number, index: number) => top + ((rows - count) / 2 + index) * rowGap + RECT_SIZE / 2;
-  const label = (text: string, x: number) => d3.select('#network').append('div')
-    .attr('class', 'layer-label').style('left', `${x + 3}px`).text(text);
+  const label = (text: string, x: number, key: string, column: number) => d3.select('#network').append('div')
+    .attr({ class: 'layer-label', 'data-layer': key, 'data-column': column })
+    .style('left', `${x + 3}px`).text(text);
 
-  label('INPUTS', inputX);
+  label('Inputs', inputX, 'inputs', 0);
   inputIds.forEach((id, index) => {
     const cy = nodeY(inputIds.length, index);
     coordinates[id] = { cx: inputX, cy };
-    drawNode(inputX, cy, id, true, container);
+    drawNode(inputX, cy, id, true, container, 0);
   });
 
   for (let layerIndex = 1; layerIndex < network.length - 1; layerIndex++) {
@@ -648,47 +766,54 @@ function drawNetwork(network: nn.Node[][]): void {
     network[layerIndex].forEach((node, index) => {
       const cy = nodeY(network[layerIndex].length, index);
       coordinates[node.id] = { cx, cy };
-      drawNode(cx, cy, node.id, false, container, node);
+      drawNode(cx, cy, node.id, false, container, layerIndex, node);
     });
   }
 
-  label('OUTPUT', outputX);
+  const outputColumn = network.length - 1;
+  label('Output', outputX, 'output', outputColumn);
   const output = nn.getOutputNode(network);
   const outputY = nodeY(1, 0);
   coordinates[output.id] = { cx: outputX, cy: outputY };
-  drawNode(outputX, outputY, output.id, false, container, output);
+  drawNode(outputX, outputY, output.id, false, container, outputColumn, output);
   d3.select(`#canvas-${output.id}`).classed('output-node', true);
-  container.append('text').attr({ x: outputX, y: outputY + RECT_SIZE / 2 + 18,
-    'text-anchor': 'middle', class: 'output-label' }).text('ŷ');
+  container.append('text').attr({ x: outputX, y: outputY + RECT_SIZE / 2 + 20,
+    'text-anchor': 'middle', class: 'output-label', 'data-column': outputColumn }).text('ŷ');
 
   for (let layerIndex = 1; layerIndex < network.length; layerIndex++) {
     network[layerIndex].forEach(node => node.inputLinks.forEach((link, index) => {
-      drawLink(link, coordinates, network, container, index === 0, index, node.inputLinks.length);
+      drawLink(link, coordinates, linkLayer, container, layerIndex - 1, index, node.inputLinks.length);
     }));
   }
   // Bias hit targets remain above connection hit targets; canvases have their own layer.
   container.selectAll('g.node').each(function() { this.parentNode.appendChild(this); });
   syncAccessibility();
+  // Style weights and biases before anything measures the graph, so new connections
+  // start at their final width instead of transitioning from the default.
+  updateWeightsUI(network, container);
+  updateBiasesUI(network);
+  if (motion) animateNetwork(motion, root, before);
 }
 
 function addPlusMinusControl(x: number, layerIndex: number): void {
   const index = layerIndex - 1;
-  const control = d3.select('#network').append('div').attr('class', 'plus-minus-neurons')
+  const count = state.networkShape[index];
+  const control = d3.select('#network').append('div')
+    .attr({ class: 'plus-minus-neurons', 'data-layer': `layer-${layerIndex}`, 'data-column': layerIndex })
     .style('left', `${x}px`);
-  control.append('div').attr('class', 'layer-name').text(`LAYER ${layerIndex}`);
+  control.append('div').attr('class', 'layer-name').text(`Layer ${layerIndex}`);
+  control.append('div').attr('class', 'neuron-count').text(`${count} neuron${count === 1 ? '' : 's'}`);
   const buttons = control.append('div').attr('class', `neuron-controls ui-numNodes${layerIndex}`);
-  buttons.append('button').attr('class', 'node-button').html(icon('plus')).on('click', () => {
-    if (state.networkShape[index] >= 8) return;
-    state.networkShape[index]++;
-    reset();
-  });
   buttons.append('button').attr('class', 'node-button').html(icon('minus')).on('click', () => {
     if (state.networkShape[index] <= 1) return;
     state.networkShape[index]--;
     reset();
   });
-  control.append('div').attr('class', 'neuron-count')
-    .text(`${state.networkShape[index]} neuron${state.networkShape[index] === 1 ? '' : 's'}`);
+  buttons.append('button').attr('class', 'node-button').html(icon('plus')).on('click', () => {
+    if (state.networkShape[index] >= 8) return;
+    state.networkShape[index]++;
+    reset();
+  });
 }
 
 function updateHoverCard(type: HoverType, nodeOrLink?: nn.Node | nn.Link,
@@ -753,9 +878,8 @@ function updateHoverCard(type: HoverType, nodeOrLink?: nn.Node | nn.Link,
 
 function drawLink(
     input: nn.Link, node2coord: {[id: string]: {cx: number, cy: number}},
-    network: nn.Node[][], container,
-    isFirst: boolean, index: number, length: number) {
-  let line = container.insert("path", ":first-child");
+    linkLayer, container, column: number, index: number, length: number) {
+  let line = linkLayer.append("path");
   let source = node2coord[input.source.id];
   let dest = node2coord[input.dest.id];
   let datum = {
@@ -772,6 +896,7 @@ function drawLink(
   line.attr({
     class: "link",
     id: "link" + input.source.id + "-" + input.dest.id,
+    "data-column": column,
     d: diagonal(datum, 0)
   });
 
@@ -801,7 +926,7 @@ function updateUI() {
   d3.select("#network").selectAll("div.canvas")
     .each(function(data: {heatmap: HeatMap, id: string}) {
       if (boundary[data.id]) {
-        data.heatmap.updateBackground(reduceMatrix(boundary[data.id], 10), state.discretize);
+        data.heatmap.updateBackground(reduceMatrix(boundary[data.id], DENSITY / NODE_DENSITY), state.discretize);
       }
     });
   d3.select("#loss-train").text(Number.isFinite(lossTrain) ? lossTrain.toFixed(3) : "—");
@@ -902,7 +1027,7 @@ function reset(onStartup = false) {
     problem: state.problem === Problem.REGRESSION ? 'regression' : 'classification',
     initZero: state.initZero,
   };
-  setStatus('Preparing the network…');
+  setStatus('Preparing the network…', 'info');
   postCommand({ type: 'init', config, model: captureModel(network), trainData, testData }, true);
 }
 
@@ -926,19 +1051,30 @@ function initTutorial() {
   }).catch(() => { /* The default article remains available if a lesson fails. */ });
 }
 
-function drawDatasetThumbnails() {
-  function renderThumbnail(canvas, dataGenerator) {
-    let w = 100;
-    let h = 100;
-    canvas.setAttribute("width", w);
-    canvas.setAttribute("height", h);
-    let context = canvas.getContext("2d");
-    let data = dataGenerator(200, 0);
-    data.forEach(function(d) {
+/** Thumbnail samples, kept so a theme change can repaint without drawing new random data. */
+const thumbnailSamples = new Map<HTMLCanvasElement, Example2D[]>();
+
+function drawDatasetThumbnails(reuseSamples = false) {
+  function renderThumbnail(canvas: HTMLCanvasElement, dataGenerator: (count: number, noise: number) => Example2D[]) {
+    // Drawn at twice the displayed size for sharp dots on high-density screens.
+    const size = 112;
+    canvas.setAttribute("width", String(size));
+    canvas.setAttribute("height", String(size));
+    const context = canvas.getContext("2d");
+    context.clearRect(0, 0, size, size);
+    let data = reuseSamples ? thumbnailSamples.get(canvas) : undefined;
+    if (!data) {
+      data = dataGenerator(200, 0);
+      thumbnailSamples.set(canvas, data);
+    }
+    data.forEach(d => {
       context.fillStyle = colorScale(d.label);
-      context.fillRect(w * (d.x + 6) / 12, h * (d.y + 6) / 12, 4, 4);
+      context.beginPath();
+      // y increases upward, matching the decision boundary plot.
+      context.arc(size * (d.x + 6) / 12, size * (6 - d.y) / 12, 3.4, 0, 2 * Math.PI);
+      context.fill();
     });
-    d3.select(canvas.parentNode).style("display", null);
+    d3.select(canvas.parentNode as Element).style("display", null);
   }
   d3.selectAll(".dataset").style("display", "none");
 
@@ -1014,3 +1150,13 @@ makeGUI();
 generateData(true);
 reset(true);
 hideControls();
+
+// A theme change repaints every canvas and colored SVG mark with the new palette.
+// The network keeps its structure, so this redraw does not animate.
+window.addEventListener(THEME_CHANGE_EVENT, () => {
+  colorScale = buildColorScale();
+  heatMap.setPalette();
+  drawDatasetThumbnails(true);
+  drawNetwork(network);
+  updateUI();
+});

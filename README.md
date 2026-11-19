@@ -1,8 +1,11 @@
 # NNVisualizer
 
-A neural-network studio with an original dark interface and the interactive learning features of [TensorFlow Playground](https://github.com/tensorflow/playground). Circular activation previews, a live prediction map, and a shared mint/coral color system make the network's behavior visible. Training runs in a browser Web Worker; Vercel serves a static Vite build. No backend, database, environment variables, GPU service, or API keys are required.
+A neural-network studio with light and dark themes and the interactive learning features of [TensorFlow Playground](https://github.com/tensorflow/playground). Circular activation previews, a live prediction map, and a violet/amber signal palette make the network's behavior visible: violet is positive, amber is negative, and the rest of the interface stays neutral so color always means something. Training runs in a browser Web Worker; Vercel serves a static Vite build. No backend, database, environment variables, GPU service, or API keys are required.
 
-![NNVisualizer studio showing a network learning to classify two Gaussian clusters](docs/studio-preview.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/studio-preview-dark.png">
+  <img alt="NNVisualizer studio showing a network learning to classify two Gaussian clusters" src="docs/studio-preview.png">
+</picture>
 
 ## Run locally
 
@@ -54,7 +57,9 @@ Upload/commit source files and the lockfile. Vercel builds `dist` itself; `node_
 - Test-data visibility, discrete output, neuron hover inspection, and shareable URL settings.
 - Classroom control visibility, `initZero=true`, `hideText=true`, and optional bundled lessons.
 - Keyboard-accessible feature and dataset controls, and horizontal network scrolling on small screens.
-- A purpose-built studio interface with locally hosted Manrope/IBM Plex Mono, circular neuron previews, model parameter counts, training status, and responsive data/results panels.
+- A purpose-built studio interface with locally hosted Mona Sans, math-typeset input labels, circular neuron previews, model parameter counts, training status, and responsive data/results panels.
+- Light and dark themes. The studio follows the system setting until you choose one with the toggle; the choice is remembered on that device. Each theme has its own signal colors, checked for contrast and color-vision-deficiency separation, and every heatmap, connection and thumbnail repaints without resetting the experiment.
+- Motion that follows cause and effect: the network wires itself up on load, neurons glide into place when you change the architecture, signals flow along the connections while training, hovering a neuron highlights its connections, and the theme change sweeps out from the toggle. Reduced-motion settings turn all of it off.
 - Copy-link sharing, a learning guide, and classroom navigation that preserve the current experiment and epoch.
 
 The initial setup matches the supplied reference link: Gaussian classification; hidden layers `8,8,8,8,8`; all seven features; Tanh; L1 at `0.01`; learning rate `0.001`; batch size `13`; 50% training data; no noise; seed `0.68936`.
@@ -83,10 +88,10 @@ flowchart LR
 | `src/training.worker.ts` | Background execution and transferable grid buffers |
 | `src/worker-protocol.ts` | Typed commands, responses, and generation identifiers |
 | `src/playground.ts` | Controls, worker coordination, centered graph geometry, model statistics, and live inspection |
-| `src/heatmap.ts`, `src/linechart.ts` | Responsive Canvas heatmaps and SVG loss curves |
-| `src/palette.ts` | Shared colors for points, activations, connections, and losses |
-| `src/studio.ts` | Navigation, clipboard sharing/fallback, and native control presentation |
-| `index.html`, `styles.css` | Original studio layout, typography, SVG icons, and responsive design |
+| `src/heatmap.ts`, `src/linechart.ts` | Responsive Canvas heatmaps and smoothed SVG loss curves |
+| `src/palette.ts` | Theme-aware signal colors for points, activations and connections, read from CSS custom properties |
+| `src/studio.ts` | Theme toggle, navigation, clipboard sharing/fallback, and native control presentation |
+| `index.html`, `styles.css` | Original studio layout, light/dark theme tokens, typography, SVG icons, motion, and responsive design |
 
 Only one automatic training request is in flight at a time. Each reset, data change, or parameter edit invalidates older snapshots. Manual epoch steps are queued explicitly. Each epoch preserves the reference's partial-batch accumulation and half-squared error, including its fixed Tanh classification output and linear regression output. Numerical divergence pauses training with a recovery message.
 

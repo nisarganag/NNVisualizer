@@ -16,8 +16,9 @@ limitations under the License.
 import {Example2D} from "./dataset";
 import * as d3 from 'd3';
 import type { Matrix } from './worker-protocol';
-import { SIGNAL_COLORS } from './palette';
-// NNVisualizer: transferable grids, studio palette, and responsive view geometry.
+import { signalRange } from './palette';
+// NNVisualizer: transferable grids, themed palette with perceptual (Lab)
+// interpolation, precomputed shade lookup, and responsive view geometry.
 
 export interface HeatMapSettings {
   [key: string]: any;
@@ -42,6 +43,8 @@ export class HeatMap {
   private yScale;
   private numSamples: number;
   private color;
+  /** RGB triplets for each quantized shade, so painting avoids parsing colors per pixel. */
+  private shades: Uint8ClampedArray;
   private canvas;
   private svg;
 
@@ -67,22 +70,6 @@ export class HeatMap {
     this.yScale = d3.scale.linear()
       .domain(yDomain)
       .range([height - 2 * padding, 0]);
-
-    // Get a range of colors.
-    let tmpScale = d3.scale.linear<string, number>()
-        .domain([0, .5, 1])
-        .range(SIGNAL_COLORS)
-        .clamp(true);
-    // Due to numerical error, we need to specify
-    // d3.range(0, end + small_epsilon, step)
-    // in order to guarantee that we will have end/step entries with
-    // the last element being equal to end.
-    let colors = d3.range(0, 1 + 1E-9, 1 / NUM_SHADES).map(a => {
-      return tmpScale(a);
-    });
-    this.color = d3.scale.quantize()
-                     .domain([-1, 1])
-                     .range(colors);
 
     container = container.append("div")
       .style({
@@ -138,6 +125,34 @@ export class HeatMap {
         .attr("transform", "translate(" + (width - 2 * padding) + ",0)")
         .call(yAxis);
     }
+    this.setPalette();
+  }
+
+  /** Rebuilds the shades from the active theme and recolors any drawn points. */
+  setPalette(range: string[] = signalRange()): void {
+    let tmpScale = d3.scale.linear<string, string>()
+        .domain([0, .5, 1])
+        .range(range)
+        .interpolate(d3.interpolateLab)
+        .clamp(true);
+    // Due to numerical error, we need to specify
+    // d3.range(0, end + small_epsilon, step)
+    // in order to guarantee that we will have end/step entries with
+    // the last element being equal to end.
+    let colors = d3.range(0, 1 + 1E-9, 1 / NUM_SHADES).map(a => {
+      return tmpScale(a);
+    });
+    this.color = d3.scale.quantize()
+                     .domain([-1, 1])
+                     .range(colors);
+    this.shades = new Uint8ClampedArray(colors.length * 3);
+    colors.forEach((color, index) => {
+      const rgb = d3.rgb(color);
+      this.shades.set([rgb.r, rgb.g, rgb.b], index * 3);
+    });
+    if (this.svg) {
+      this.svg.selectAll("circle").style("fill", (d: Example2D) => this.color(d.label));
+    }
   }
 
   updateTestPoints(points: Example2D[]): void {
@@ -167,18 +182,26 @@ export class HeatMap {
     // Compute the pixel colors; scaled by CSS.
     let context = (this.canvas.node() as HTMLCanvasElement).getContext("2d");
     let image = context.createImageData(dx, dy);
+    const shades = this.shades;
+    const levels = shades.length / 3;
+    const neutral = (levels - 1) >> 1;
+    const alpha = this.settings.noSvg ? 255 : 210;
 
-    for (let y = 0, p = -1; y < dy; ++y) {
-      for (let x = 0; x < dx; ++x) {
+    for (let y = 0, p = 0; y < dy; ++y) {
+      for (let x = 0; x < dx; ++x, p += 4) {
         let value = data[x][y];
         if (discretize) {
           value = (value >= 0 ? 1 : -1);
         }
-        let c = d3.rgb(this.color(value));
-        image.data[++p] = c.r;
-        image.data[++p] = c.g;
-        image.data[++p] = c.b;
-        image.data[++p] = this.settings.noSvg ? 255 : 210;
+        // The same buckets as d3.scale.quantize over [-1, 1].
+        let level = Number.isNaN(value) ? neutral : Math.floor(levels * (value + 1) / 2);
+        if (level < 0) level = 0;
+        else if (level >= levels) level = levels - 1;
+        const shade = level * 3;
+        image.data[p] = shades[shade];
+        image.data[p + 1] = shades[shade + 1];
+        image.data[p + 2] = shades[shade + 2];
+        image.data[p + 3] = alpha;
       }
     }
     context.putImageData(image, 0, 0);

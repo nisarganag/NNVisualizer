@@ -65,7 +65,8 @@ test('plays, pauses, updates the loss chart and rejects old results after reset'
   const paused = await epoch(page);
   await page.waitForTimeout(150);
   expect(await epoch(page)).toBe(paused);
-  expect(await page.locator('#linechart path.line').first().getAttribute('d')).toContain('L');
+  // The loss curve has drawn segments after its starting point (straight or smoothed).
+  expect(await page.locator('#linechart path.line').first().getAttribute('d')).toMatch(/^M[^M]+[LCS]/);
   await page.getByRole('button', { name: 'Run training', exact: true }).click();
   await page.getByRole('button', { name: 'Reset the network', exact: true }).click();
   await ready(page);
@@ -172,8 +173,13 @@ test('neuron inspection, test-point visibility and discrete heatmaps work', asyn
   const initial = await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL());
   await page.locator('#canvas-sinX').hover();
   expect(await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL())).not.toBe(initial);
+  await expect(page.locator('#inspection-label')).toHaveText('Input sin(x₁)');
+  // An input feeds every neuron of the first hidden layer; only those connections stay lit.
+  await expect(page.locator('#network path.link.related')).toHaveCount(8);
   await page.locator('header').hover();
   expect(await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL())).toBe(initial);
+  await expect(page.locator('#network path.link.related')).toHaveCount(0);
+  await expect(page.locator('#inspection-label')).toHaveText('Output');
   await page.locator('label[for="show-test-data"]').click();
   await expect(page.locator('#show-test-data')).toBeChecked();
   await expect(page.locator('#heatmap g.test circle')).toHaveCount(250);
@@ -334,6 +340,52 @@ test('the classroom link opens the latest configuration without disturbing the a
   expect(await epoch(page)).toBe(1);
   expect(await epoch(classroom)).toBe(0);
   await classroom.close();
+});
+
+test.describe('themes', () => {
+  test.use({ colorScheme: 'dark' });
+  test('follow the system, switch without resetting the experiment, and are remembered', async ({ page }) => {
+    await page.goto('/');
+    await ready(page);
+    const root = page.locator('html');
+    const toggle = page.getByRole('button', { name: 'Dark theme', exact: true });
+    await expect(root).toHaveAttribute('data-theme', 'dark');
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await step(page);
+    const experiment = page.url();
+    const heatmap = page.locator('#heatmap canvas');
+    const thumbnail = page.locator('canvas[data-dataset="gauss"]');
+    const paint = (locator: typeof heatmap) => locator.evaluate((element: HTMLCanvasElement) => element.toDataURL());
+    const before = { heatmap: await paint(heatmap), thumbnail: await paint(thumbnail),
+      link: await page.locator('#linkx-1').evaluate(element => getComputedStyle(element).stroke) };
+    await toggle.click();
+    await expect(root).toHaveAttribute('data-theme', 'light');
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(() => paint(heatmap)).not.toBe(before.heatmap);
+    expect(await paint(thumbnail)).not.toBe(before.thumbnail);
+    await expect.poll(() => page.locator('#linkx-1').evaluate(element => getComputedStyle(element).stroke)).not.toBe(before.link);
+    expect(await page.locator('meta[name="theme-color"]').getAttribute('content')).toBe('#f3f4f9');
+    expect(page.url()).toBe(experiment);
+    expect(await epoch(page)).toBe(1);
+    await expect(page.locator('#network div.canvas')).toHaveCount(48);
+    await page.reload();
+    await ready(page);
+    await expect(root).toHaveAttribute('data-theme', 'light');
+  });
+});
+
+test.describe('reduced motion', () => {
+  test.use({ reducedMotion: 'reduce' });
+  test('keeps the graph still and switches themes instantly', async ({ page }) => {
+    await page.goto('/');
+    await ready(page);
+    await page.locator('#add-layers').click();
+    await ready(page);
+    expect(await page.evaluate(() => document.getAnimations().length)).toBe(0);
+    await page.getByRole('button', { name: 'Dark theme', exact: true }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    expect(await page.evaluate(() => document.getAnimations().length)).toBe(0);
+  });
 });
 
 test.describe('touch parameter editing', () => {
