@@ -243,6 +243,51 @@ export interface PositionTrace {
   /** Token plus position embedding: the block input (768). */
   input: Float32Array;
   layers: LayerStep[];
+  /** Next-token logits after this position, kept once computed. */
+  logits?: Float32Array;
+  /** How unexpected this token was, kept once computed. */
+  surprise?: Surprise;
+}
+
+/** How unexpected a token was, given every token before it. */
+export interface Surprise {
+  /** −log2 p(token | earlier tokens). */
+  bits: number;
+  /** Where the token ranked among all possible next tokens; 1 is the model's top guess. */
+  rank: number;
+}
+
+/** −log2 of a token's softmax probability under `logits`, and its rank (1 = most likely). */
+export function surpriseOf(logits: Float32Array, token: number): Surprise {
+  let max = -Infinity;
+  for (let i = 0; i < logits.length; i++) if (logits[i] > max) max = logits[i];
+  const target = logits[token];
+  let total = 0;
+  let rank = 1;
+  for (let i = 0; i < logits.length; i++) {
+    total += Math.exp(logits[i] - max);
+    if (logits[i] > target) rank++;
+  }
+  // log-sum-exp is never below the token's own logit; clamp rounding at p ≈ 1.
+  return { bits: Math.max(0, (max + Math.log(total) - target) / Math.LN2), rank };
+}
+
+/** The `k` most likely tokens under softmax(logits), most likely first. */
+export function topTokens(logits: Float32Array, k: number): { ids: number[]; probabilities: number[] } {
+  let max = -Infinity;
+  for (let i = 0; i < logits.length; i++) if (logits[i] > max) max = logits[i];
+  let total = 0;
+  for (let i = 0; i < logits.length; i++) total += Math.exp(logits[i] - max);
+  // A short sorted list beats sorting all 50,257 entries.
+  const ids: number[] = [];
+  for (let i = 0; i < logits.length; i++) {
+    if (ids.length === k && logits[i] <= logits[ids[k - 1]]) continue;
+    let at = ids.length;
+    while (at > 0 && logits[ids[at - 1]] < logits[i]) at--;
+    ids.splice(at, 0, i);
+    if (ids.length > k) ids.pop();
+  }
+  return { ids, probabilities: ids.map(id => Math.exp(logits[id] - max) / total) };
 }
 
 export class Gpt2Session {
@@ -351,35 +396,87 @@ export class Gpt2Session {
     });
   }
 
+  /** The final layer norm, which the model applies before scoring next tokens. */
+  private finalNorm(stream: Float32Array): Float32Array {
+    const { config, finalNorm } = this.weights;
+    return layerNorm(stream, finalNorm, config.layerNormEpsilon);
+  }
+
   /** The final layer-normed vector at the last position. */
   finalHidden(): Float32Array | null {
     const last = this.positions.at(-1);
-    if (!last) return null;
-    const { config, finalNorm } = this.weights;
-    return layerNorm(last.layers[config.nLayer - 1].output, finalNorm, config.layerNormEpsilon);
+    return last ? this.finalNorm(last.layers[this.weights.config.nLayer - 1].output) : null;
   }
 
-  /** Next-token logits after the last position (GPT-2 ties output and token embeddings). */
-  logits(): Float32Array | null {
-    const hidden = this.finalHidden();
-    if (!hidden) return null;
+  /**
+   * Scores every token as the next one, for each final layer-normed vector
+   * (GPT-2 ties output and token embeddings). Reads the embedding matrix once
+   * however many vectors there are.
+   */
+  logitsFor(hidden: Float32Array[]): Float32Array[] {
     const { tokenEmbedding, outputCorrection } = this.weights;
-    const logits = linear([hidden], tokenEmbedding)[0];
+    const logits = linear(hidden, tokenEmbedding);
     if (outputCorrection && tokenEmbedding.scales) {
       // Replace the rounded embedding values on the outsized dimensions with exact ones.
       const { dims, values } = outputCorrection;
-      const { cols, data, scales, groupSize } = tokenEmbedding;
+      const { rows, cols, data, scales, groupSize } = tokenEmbedding;
       const blocks = cols / groupSize;
       const k = dims.length;
-      for (let t = 0; t < logits.length; t++) {
-        let delta = 0;
+      const error = new Float64Array(k);
+      for (let t = 0; t < rows; t++) {
         for (let j = 0; j < k; j++) {
           const d = dims[j];
-          delta += (values[t * k + j] - data[t * cols + d] * scales[t * blocks + Math.floor(d / groupSize)]) * hidden[d];
+          error[j] = values[t * k + j] - data[t * cols + d] * scales[t * blocks + Math.floor(d / groupSize)];
         }
-        logits[t] += delta;
+        for (let i = 0; i < hidden.length; i++) {
+          let delta = 0;
+          for (let j = 0; j < k; j++) delta += error[j] * hidden[i][dims[j]];
+          logits[i][t] += delta;
+        }
       }
     }
     return logits;
+  }
+
+  /** Next-token logits after the last position (a copy the caller may keep or transfer). */
+  logits(): Float32Array | null {
+    if (!this.positions.length) return null;
+    this.prepareLogits([this.positions.length - 1]);
+    return this.positions.at(-1).logits.slice();
+  }
+
+  /** Computes, in one pass, the next-token logits of any listed position that lacks them. */
+  private prepareLogits(positions: number[]): void {
+    const missing = positions.map(t => this.positions[t]).filter(trace => !trace.logits);
+    if (!missing.length) return;
+    const last = this.weights.config.nLayer - 1;
+    const logits = this.logitsFor(missing.map(trace => this.finalNorm(trace.layers[last].output)));
+    missing.forEach((trace, i) => { trace.logits = logits[i]; });
+  }
+
+  /**
+   * The logit lens: what the model would predict after `position` if it stopped
+   * after the embedding (row 0) or after block l (row l + 1). Each residual
+   * stream goes through the final layer norm and the unembedding exactly as the
+   * real output does, so the last row is the model's actual prediction.
+   */
+  lens(position: number): Float32Array[] {
+    const trace = this.positions[position];
+    if (!trace) throw new RangeError(`There is no token at position ${position}.`);
+    const streams = [trace.input, ...trace.layers.map(step => step.output)];
+    return this.logitsFor(streams.map(stream => this.finalNorm(stream)));
+  }
+
+  /**
+   * How unexpected each token was given the tokens before it (null for the
+   * first, which has no context). Scores are kept per position: earlier
+   * positions never change, so after setTokens only new ones are computed.
+   */
+  surprisal(): (Surprise | null)[] {
+    const unscored: number[] = [];
+    for (let t = 1; t < this.positions.length; t++) if (!this.positions[t].surprise) unscored.push(t);
+    this.prepareLogits(unscored.map(t => t - 1));
+    for (const t of unscored) this.positions[t].surprise = surpriseOf(this.positions[t - 1].logits, this.positions[t].token);
+    return this.positions.map((trace, t) => (t === 0 ? null : trace.surprise));
   }
 }

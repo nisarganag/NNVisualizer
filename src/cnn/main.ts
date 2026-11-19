@@ -2,9 +2,10 @@ import '@fontsource-variable/mona-sans/wdth.css';
 import '../../styles.css';
 import './cnn.css';
 import * as d3 from 'd3';
-import { initializeSite } from '../site';
+import { initializeSite, reducedMotion } from '../site';
 import { signalRange, THEME_CHANGE_EVENT } from '../palette';
-import { CNN_LAYOUT, parseCnnWeights, parseSamples, preprocessDrawing, runCnn, type CnnActivations, type CnnWeights } from './model';
+import { ATTACK_PIXEL_CAP, startAttack, stepAttack, topDigit, type Attack } from './attack';
+import { CNN_LAYOUT, inputGradient, parseCnnWeights, parseSamples, preprocessDrawing, runCnn, type CnnActivations, type CnnWeights } from './model';
 
 initializeSite();
 
@@ -12,15 +13,28 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const pad = $<HTMLCanvasElement>('draw-pad');
 const padContext = pad.getContext('2d', { willReadFrequently: true });
 const workbench = $('cnn-workbench');
+const targetSelect = $<HTMLSelectElement>('fool-target');
+const foolButton = $<HTMLButtonElement>('fool-start');
+const undoButton = $<HTMLButtonElement>('fool-undo');
 
 let weights: CnnWeights | null = null;
 let samples: Float32Array[] = [];
+/** What the page shows: the drawing's activations, or the attack's while one is shown. */
 let activations: CnnActivations | null = null;
+/** The drawing as the network sees it (28×28), or null while the pad is blank. */
+let drawn: Float32Array | null = null;
 /** Strokes in pad-relative coordinates (0..1), so they redraw at any size or theme. */
 let strokes: { x: number; y: number }[][] = [];
 let example: Float32Array | null = null;
 let exampleOrder: number[] = [];
 let inspected: { layer: LayerName; index: number } | null = null;
+/**
+ * Fool the network: while set, every view shows the attack's input instead of the
+ * drawing, and live classification from the pad is paused.
+ */
+let fooling: { attack: Attack; original: Float32Array; answer: number; timer: number } | null = null;
+/** The digit the visitor asked the network to read, once they pick one. */
+let chosenTarget: number | null = null;
 
 type LayerName = 'conv1' | 'pool1' | 'conv2' | 'pool2';
 const LAYERS: Record<LayerName, { count: number; size: number; title: string }> = {
@@ -32,9 +46,17 @@ const LAYERS: Record<LayerName, { count: number; size: number; title: string }> 
 
 /* ---------- Colors ---------- */
 
+type Rgb = [number, number, number];
+const toRgb = (color: string): Rgb => {
+  const { r, g, b } = d3.rgb(color);
+  return [r, g, b];
+};
+
 let sequential = new Uint8ClampedArray(256 * 3);
 let diverging: (t: number) => string = () => '#888';
-let inkRgb: [number, number, number] = [28, 30, 45];
+let inkRgb: Rgb = [28, 30, 45];
+let signal = { positive: '#744ed7', negative: '#cf6d01' };
+let signalRgb = { positive: toRgb(signal.positive), negative: toRgb(signal.negative) };
 function buildColors() {
   const [negative, neutral, positive] = signalRange();
   const scale = d3.scale.linear<string, string>().domain([0, 1]).range([neutral, positive]).interpolate(d3.interpolateLab);
@@ -44,8 +66,9 @@ function buildColors() {
   }
   const divergingScale = d3.scale.linear<string, string>().domain([-1, 0, 1]).range([negative, neutral, positive]).interpolate(d3.interpolateLab).clamp(true);
   diverging = t => divergingScale(t);
-  const ink = d3.rgb(getComputedStyle(document.documentElement).getPropertyValue('--ink').trim() || '#1c1e2d');
-  inkRgb = [ink.r, ink.g, ink.b];
+  signal = { positive, negative };
+  signalRgb = { positive: toRgb(positive), negative: toRgb(negative) };
+  inkRgb = toRgb(getComputedStyle(document.documentElement).getPropertyValue('--ink').trim() || '#1c1e2d');
 }
 buildColors();
 
@@ -69,6 +92,83 @@ function paintInput(canvas: HTMLCanvasElement, input: Float32Array | null) {
   const context = canvas.getContext('2d');
   const image = context.createImageData(28, 28);
   if (input) for (let i = 0; i < 784; i++) image.data.set([...inkRgb, Math.round(input[i] * 255)], i * 4);
+  context.putImageData(image, 0, 0);
+}
+
+const inputTile = document.createElement('canvas');
+
+/**
+ * What the network sees, at the screen's resolution so that pixels changed by an attack
+ * can be outlined: violet where a pixel gained ink, amber where it lost it.
+ */
+function paintInputView(input: Float32Array | null, changes: Int8Array | null) {
+  const canvas = $<HTMLCanvasElement>('input-view');
+  canvas.setAttribute('aria-label', changes
+    ? 'What the network sees once the changed pixels are applied, 28 by 28 pixels'
+    : 'Your drawing as the network sees it, 28 by 28 pixels');
+  const cell = Math.max(1, Math.round((canvas.getBoundingClientRect().width * (window.devicePixelRatio || 1)) / 28));
+  canvas.width = 28 * cell;
+  canvas.height = 28 * cell;
+  if (!input) return;
+  const context = canvas.getContext('2d');
+  paintInput(inputTile, input);
+  context.imageSmoothingEnabled = false;
+  context.drawImage(inputTile, 0, 0, canvas.width, canvas.height);
+  if (!changes) return;
+  const line = Math.max(1, Math.round(cell / 4));
+  context.lineWidth = line;
+  for (const [change, color] of [[1, signal.positive], [-1, signal.negative]] as const) {
+    context.strokeStyle = color;
+    context.beginPath();
+    for (let i = 0; i < 784; i++) {
+      if (changes[i] === change) context.rect((i % 28) * cell + line / 2, Math.floor(i / 28) * cell + line / 2, cell - line, cell - line);
+    }
+    context.stroke();
+  }
+}
+
+/** Inked pixels below the top of the saliency color scale; the strongest 2% saturate. */
+const SALIENCY_QUANTILE = 0.98;
+/** Opacity of the ink under the colors, so the digit stays readable where its ink barely matters. */
+const SALIENCY_INK = 0.16;
+/** Below 1, lifts moderate contributions so they show next to the strongest ones. */
+const SALIENCY_GAMMA = 0.75;
+
+/**
+ * What mattered most: gradient × input for the digit the network reads, the amount
+ * each pixel's ink adds to (violet) or takes from (amber) that digit's score, to first
+ * order. Each image is scaled by a robust max, the 98th percentile of its inked pixels'
+ * magnitudes, so one extreme pixel cannot wash out the rest. The color is laid over
+ * faint ink with an opacity that grows with the contribution; blank pixels stay transparent.
+ */
+function paintSaliency(input: Float32Array | null) {
+  const canvas = $<HTMLCanvasElement>('saliency-view');
+  canvas.width = 28;
+  canvas.height = 28;
+  if (!input || !activations || !weights) return;
+  const contribution = inputGradient(weights, activations, topDigit(activations.probabilities));
+  const magnitudes: number[] = [];
+  for (let i = 0; i < 784; i++) {
+    contribution[i] *= input[i];
+    if (input[i] > 0) magnitudes.push(Math.abs(contribution[i]));
+  }
+  if (!magnitudes.length) return;
+  magnitudes.sort((a, b) => a - b);
+  const scale = magnitudes[Math.floor(SALIENCY_QUANTILE * (magnitudes.length - 1))] || magnitudes[magnitudes.length - 1] || 1;
+  const context = canvas.getContext('2d');
+  const image = context.createImageData(28, 28);
+  for (let i = 0; i < 784; i++) {
+    if (!(input[i] > 0)) continue;
+    const strength = Math.min(1, Math.abs(contribution[i]) / scale) ** SALIENCY_GAMMA;
+    const color = contribution[i] >= 0 ? signalRgb.positive : signalRgb.negative;
+    // Color over ink ("source over"), then the whole pixel fades with its amount of ink.
+    const under = SALIENCY_INK * (1 - strength);
+    const alpha = strength + under;
+    for (let channel = 0; channel < 3; channel++) {
+      image.data[i * 4 + channel] = (color[channel] * strength + inkRgb[channel] * under) / alpha;
+    }
+    image.data[i * 4 + 3] = Math.round(alpha * input[i] * 255);
+  }
   context.putImageData(image, 0, 0);
 }
 
@@ -126,6 +226,8 @@ const point = (event: PointerEvent) => {
 pad.addEventListener('pointerdown', event => {
   if (event.button !== 0) return;
   event.preventDefault();
+  // Drawing again leaves the attack and goes back to reading the drawing.
+  stopFooling();
   pad.setPointerCapture(event.pointerId);
   drawing = [point(event)];
   strokes.push(drawing);
@@ -147,6 +249,8 @@ pad.addEventListener('pointerup', endStroke);
 pad.addEventListener('pointercancel', endStroke);
 
 $('clear-pad').addEventListener('click', () => {
+  stopFooling();
+  chosenTarget = null;
   strokes = [];
   example = null;
   redrawPad();
@@ -156,6 +260,8 @@ $('clear-pad').addEventListener('click', () => {
 
 $('example-digit').addEventListener('click', () => {
   if (!samples.length) return;
+  stopFooling();
+  chosenTarget = null;
   if (!exampleOrder.length) exampleOrder = samples.map((_sample, i) => i).sort(() => Math.random() - .5);
   example = samples[exampleOrder.pop()];
   strokes = [];
@@ -223,8 +329,7 @@ function renderPrediction() {
     }
   }
   const probabilities = activations?.probabilities;
-  let best = -1;
-  if (probabilities) best = probabilities.reduce((top, p, i) => (p > probabilities[top] ? i : top), 0);
+  const best = probabilities ? topDigit(probabilities) : -1;
   Array.from(list.children).forEach((item, digit) => {
     const p = probabilities ? probabilities[digit] : 0;
     (item.querySelector('.bar-track i') as HTMLElement).style.width = `${p * 100}%`;
@@ -293,22 +398,130 @@ function renderInspector() {
       : `This 3×3 filter slides over the drawing. Violet weights add to its response and amber weights subtract; bias ${bias.toFixed(3)}.`;
 }
 
+/* ---------- Fool the network ---------- */
+
+/** About 25 attack steps a second. */
+const ATTACK_STEP_MS = 40;
+
+/** The most likely digit other than the answer. */
+function runnerUp(probabilities: Float32Array, answer: number): number {
+  let best = answer === 0 ? 1 : 0;
+  for (let digit = 0; digit < 10; digit++) if (digit !== answer && probabilities[digit] > probabilities[best]) best = digit;
+  return best;
+}
+
+/** Starts an attack on the drawing toward the chosen digit; a new one always starts from the drawing. */
+function fool() {
+  if (!weights || !activations) return;
+  const original = fooling?.original ?? drawn;
+  const answer = fooling?.answer ?? topDigit(activations.probabilities);
+  const target = Number(targetSelect.value);
+  if (!original || target === answer) return;
+  stopFooling();
+  const attack = startAttack(weights, original, target);
+  fooling = { attack, original, answer, timer: 0 };
+  if (reducedMotion.matches) {
+    while (attack.status === 'running') stepAttack(weights, attack);
+  } else if (attack.status === 'running') {
+    fooling.timer = window.setInterval(advanceAttack, ATTACK_STEP_MS);
+  }
+  activations = attack.activations;
+  render();
+}
+
+function advanceAttack() {
+  if (!fooling || !weights) return;
+  const { attack } = fooling;
+  stepAttack(weights, attack);
+  if (attack.status !== 'running') {
+    window.clearInterval(fooling.timer);
+    fooling.timer = 0;
+  }
+  activations = attack.activations;
+  render();
+}
+
+/** Leaves the attack. The caller reclassifies the drawing. */
+function stopFooling() {
+  if (!fooling) return;
+  window.clearInterval(fooling.timer);
+  fooling = null;
+}
+
+function describeAttack(attack: Attack, answer: number): string {
+  const changes = attack.order.length;
+  if (attack.status === 'running') return `Changing pixels: ${changes} so far`;
+  const { probabilities } = attack.activations;
+  const reads = topDigit(probabilities);
+  const sure = `${Math.round(probabilities[reads] * 100)}% sure`;
+  const count = changes === 1 ? '1 pixel change' : `${changes} pixel changes`;
+  if (attack.status === 'fooled') {
+    const share = (changes / 784) * 100;
+    return `It now reads ${reads}, ${sure}, after ${count} (${share < 1 ? 'under 1%' : `${Math.round(share)}%`} of the image).`;
+  }
+  const verdict = `It ${reads === answer ? 'still reads' : 'reads'} ${reads}, ${sure}.`;
+  return changes >= ATTACK_PIXEL_CAP
+    ? `${count} weren’t enough to make it read ${attack.target}. ${verdict}`
+    : `No pixel left to change would help it read ${attack.target}. ${verdict}`;
+}
+
+function renderFool() {
+  const answer = fooling ? fooling.answer : activations ? topDigit(activations.probabilities) : -1;
+  targetSelect.disabled = answer < 0;
+  foolButton.disabled = answer < 0;
+  Array.from(targetSelect.options).forEach((option, digit) => { option.disabled = digit === answer; });
+  // Until the visitor picks a digit, aim for the runner-up.
+  if (activations && !fooling) {
+    targetSelect.value = String(chosenTarget !== null && chosenTarget !== answer ? chosenTarget : runnerUp(activations.probabilities, answer));
+  }
+  undoButton.hidden = !fooling;
+  const status = $('fool-status');
+  status.textContent = fooling ? describeAttack(fooling.attack, fooling.answer) : '';
+  // Screen readers hear the outcome once rather than every step.
+  const running = String(fooling?.attack.status === 'running');
+  status.setAttribute('aria-busy', running);
+  $('verdict').setAttribute('aria-busy', running);
+}
+
+targetSelect.addEventListener('change', () => { chosenTarget = Number(targetSelect.value); });
+foolButton.addEventListener('click', fool);
+undoButton.addEventListener('click', () => {
+  stopFooling();
+  classify();
+  // The Undo button hides itself, so keep focus nearby.
+  foolButton.focus();
+});
+
+/* ---------- Classification ---------- */
+
+/** Reads the pad and runs the network, unless an attack is shown (the pad is paused then). */
 function classify() {
   if (!weights) return;
-  const { width, height } = pad;
-  let input: Float32Array | null = null;
-  if (width && height) {
-    const rgba = padContext.getImageData(0, 0, width, height).data;
-    const alpha = new Uint8ClampedArray(width * height);
-    for (let i = 0; i < alpha.length; i++) alpha[i] = rgba[i * 4 + 3];
-    input = preprocessDrawing(alpha, width, height);
+  if (!fooling) {
+    const { width, height } = pad;
+    drawn = null;
+    if (width && height) {
+      const rgba = padContext.getImageData(0, 0, width, height).data;
+      const alpha = new Uint8ClampedArray(width * height);
+      for (let i = 0; i < alpha.length; i++) alpha[i] = rgba[i * 4 + 3];
+      drawn = preprocessDrawing(alpha, width, height);
+    }
+    activations = drawn ? runCnn(weights, drawn) : null;
   }
-  activations = input ? runCnn(weights, input) : null;
+  render();
+}
+
+/** Paints every view from `activations` and the input they came from. */
+function render() {
+  const input = fooling ? fooling.attack.input : drawn;
   workbench.classList.toggle('is-empty', !activations);
-  paintInput($<HTMLCanvasElement>('input-view'), input);
+  workbench.classList.toggle('is-fooled', Boolean(fooling));
+  paintInputView(input, fooling ? fooling.attack.changes : null);
+  paintSaliency(input);
   renderMaps();
   renderPrediction();
   renderInspector();
+  renderFool();
 }
 
 function renderAll() {

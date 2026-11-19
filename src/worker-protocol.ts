@@ -1,7 +1,8 @@
 import type { Example2D } from './dataset';
 import type { ModelState } from './model-state';
 
-export type ActivationName = 'relu' | 'tanh' | 'sigmoid' | 'linear';
+export type ActivationName = 'relu' | 'tanh' | 'sigmoid' | 'linear' | 'leakyRelu' | 'gelu';
+export type OptimizerName = 'sgd' | 'momentum' | 'adam';
 export type RegularizationName = 'none' | 'L1' | 'L2';
 export type ParameterKind = 'weight' | 'bias';
 
@@ -19,6 +20,8 @@ export interface TrainingSettings {
   learningRate: number;
   regularizationRate: number;
   batchSize: number;
+  /** Defaults to the original SGD update. */
+  optimizer?: OptimizerName;
 }
 
 export interface SimulationSnapshot {

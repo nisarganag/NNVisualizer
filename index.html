@@ -122,7 +122,8 @@ limitations under the License.
       </div>
       <div class="training-settings">
         <div class="control ui-learningRate"><label for="learningRate">Learning rate</label><div class="select"><select id="learningRate"><option value="0.00001">0.00001</option><option value="0.0001">0.0001</option><option value="0.001">0.001</option><option value="0.003">0.003</option><option value="0.01">0.01</option><option value="0.03">0.03</option><option value="0.1">0.1</option><option value="0.3">0.3</option><option value="1">1</option><option value="3">3</option><option value="10">10</option></select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
-        <div class="control ui-activation"><label for="activations">Activation</label><div class="select"><select id="activations"><option value="relu">ReLU</option><option value="tanh">Tanh</option><option value="sigmoid">Sigmoid</option><option value="linear">Linear</option></select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
+        <div class="control ui-activation"><label for="activations">Activation</label><div class="select"><select id="activations"><option value="relu">ReLU</option><option value="leakyRelu">Leaky ReLU</option><option value="tanh">Tanh</option><option value="sigmoid">Sigmoid</option><option value="gelu">GELU</option><option value="linear">Linear</option></select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
+        <div class="control ui-optimizer"><label for="optimizer">Optimizer</label><div class="select"><select id="optimizer"><option value="sgd">SGD</option><option value="momentum">Momentum</option><option value="adam">Adam</option></select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
         <div class="control ui-regularization"><label for="regularizations">Regularization</label><div class="select"><select id="regularizations"><option value="none">None</option><option value="L1">L1</option><option value="L2">L2</option></select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
         <div class="control ui-regularizationRate"><label for="regularRate">Regularization rate</label><div class="select"><select id="regularRate"><option value="0">0</option><option value="0.001">0.001</option><option value="0.003">0.003</option><option value="0.01">0.01</option><option value="0.03">0.03</option><option value="0.1">0.1</option><option value="0.3">0.3</option><option value="1">1</option><option value="3">3</option><option value="10">10</option></select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
       </div>
@@ -139,9 +140,19 @@ limitations under the License.
             <div class="dataset" title="Exclusive or"><canvas class="data-thumbnail" data-dataset="xor"></canvas><span>XOR</span></div>
             <div class="dataset" title="Gaussian"><canvas class="data-thumbnail" data-dataset="gauss"></canvas><span>Gaussian</span></div>
             <div class="dataset" title="Spiral"><canvas class="data-thumbnail" data-dataset="spiral"></canvas><span>Spiral</span></div>
+            <div class="dataset dataset-custom" title="Your own points"><canvas class="data-thumbnail" data-dataset="custom"></canvas><span>Draw your own</span></div>
             <div class="dataset" title="Plane"><canvas class="data-thumbnail" data-regDataset="reg-plane"></canvas><span>Plane</span></div>
             <div class="dataset" title="Multi gaussian"><canvas class="data-thumbnail" data-regDataset="reg-gauss"></canvas><span>Multi-Gauss</span></div>
           </div></div>
+          <div id="paint-controls" class="paint-controls" hidden>
+            <p class="field-label">Click the decision boundary plot to place points</p>
+            <div class="segmented" role="radiogroup" aria-label="What a click places">
+              <button type="button" role="radio" aria-checked="true" data-paint="1"><i class="paint-swatch positive" aria-hidden="true"></i>Violet</button>
+              <button type="button" role="radio" aria-checked="false" data-paint="-1"><i class="paint-swatch negative" aria-hidden="true"></i>Amber</button>
+              <button type="button" role="radio" aria-checked="false" data-paint="0">Erase</button>
+            </div>
+            <button id="clear-points" class="button secondary small" type="button">Clear points</button>
+          </div>
           <div class="range-control ui-percTrainData"><label for="percTrainData"><span>Training split</span><span class="range-value"><span class="value">50</span>%</span></label><input type="range" id="percTrainData" min="10" max="90" step="10"><div class="range-caption"><span><i class="point-glyph train" aria-hidden="true"></i><span id="train-count">250</span> train</span><span><span id="test-count">250</span> test<i class="point-glyph test" aria-hidden="true"></i></span></div></div>
           <div class="range-control ui-noise"><label for="noise"><span>Noise</span><span class="range-value"><span class="value">0</span></span></label><input type="range" id="noise" min="0" max="50" step="5"></div>
           <div class="range-control ui-batchSize"><label for="batchSize"><span>Batch size</span><span class="range-value"><span class="value">13</span></span></label><input type="range" id="batchSize" min="1" max="30" step="1"></div>
@@ -152,11 +163,11 @@ limitations under the License.
 
       <section class="column features panel network-panel" aria-labelledby="network-heading">
         <div class="panel-heading network-heading"><h2 id="network-heading">Network</h2><span class="parameter-badge"><span id="parameter-count" class="readout">361</span> parameters</span></div>
-        <div class="network-toolbar"><span class="network-summary"><strong id="num-layers" class="readout">5</strong> <span id="layers-label">hidden layers</span></span><div class="layer-actions ui-numHiddenLayers"><button id="remove-layers" class="icon-button small" aria-label="Remove a hidden layer" title="Remove a hidden layer"><svg class="icon" aria-hidden="true"><use href="#i-minus"/></svg></button><button id="add-layers" class="button subtle small" aria-label="Add a hidden layer"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>Add layer</button></div></div>
+        <div class="network-toolbar"><span class="network-summary"><strong id="num-layers" class="readout">5</strong> <span id="layers-label">hidden layers</span></span><label class="toggle backprop-toggle ui-showBackprop" for="show-backprop"><span>Show backpropagation</span><input type="checkbox" id="show-backprop"></label><div class="layer-actions ui-numHiddenLayers"><button id="remove-layers" class="icon-button small" aria-label="Remove a hidden layer" title="Remove a hidden layer"><svg class="icon" aria-hidden="true"><use href="#i-minus"/></svg></button><button id="add-layers" class="button subtle small" aria-label="Add a hidden layer"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>Add layer</button></div></div>
         <div class="playground-scroll" role="region" aria-label="Neural network playground" tabindex="0">
           <div id="network"><svg id="svg" aria-label="Neural network connections"></svg><div id="hovercard"><div class="hovercard-hint">Click to edit this value</div><div class="hovercard-value"><span class="type">Weight</span><span class="value">0.2</span><input aria-label="Weight or bias value" type="number" step="any"></div></div></div>
         </div>
-        <div class="network-bottom"><span><span id="feature-count" class="readout">7</span> inputs, 1 output</span><span class="network-legend"><i class="legend-line positive" aria-hidden="true"></i>positive weight<i class="legend-line negative" aria-hidden="true"></i>negative weight</span></div>
+        <div class="network-bottom"><span><span id="feature-count" class="readout">7</span> inputs, 1 output</span><span class="network-legend"><i class="legend-line positive" aria-hidden="true"></i>positive weight<i class="legend-line negative" aria-hidden="true"></i>negative weight</span><span class="backprop-legend">Dashes flowing back show each weight’s next change: <span class="text-positive">violet up</span>, <span class="text-negative">amber down</span>.</span></div>
         <div class="graph-tip"><svg class="icon" aria-hidden="true"><use href="#i-info"/></svg><span>Click an input to switch it on or off. Hover a neuron to see what it has learned. Click a connection or bias to edit it.</span><span class="mobile-hint">Swipe to see the whole network</span></div>
       </section>
 
@@ -170,6 +181,7 @@ limitations under the License.
           <div class="prediction">
             <div class="prediction-heading"><h3 id="output-title">Decision boundary</h3><span id="inspection-label">Output</span></div>
             <div id="heatmap"></div>
+            <p id="plot-hint" class="plot-hint" hidden>Click anywhere on the plot to place a point.</p>
             <div class="color-key"><span class="readout">−1</span><span class="color-key-bar" role="img" aria-label="Amber shows negative values and violet shows positive values"></span><span class="readout">+1</span></div>
             <div class="output-options"><label class="toggle ui-showTestData" for="show-test-data"><span>Show test data</span><input type="checkbox" id="show-test-data"></label><label class="toggle ui-discretize" for="discretize"><span>Discretize output</span><input type="checkbox" id="discretize"></label></div>
           </div>

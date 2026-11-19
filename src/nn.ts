@@ -12,6 +12,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+// Neural Network Visualizer modifications: Leaky ReLU and GELU activations;
+// Momentum and Adam optimizers beside the original SGD update (unchanged); the
+// last applied gradient is kept on each weight and bias for the backprop view.
 
 /**
  * A node in a neural network. Each node has a state
@@ -44,6 +47,12 @@ export class Node {
   numAccumulatedDers = 0;
   /** Activation function that takes total input and returns node's output */
   activation: ActivationFunction;
+  /** Mean dE/db from the most recent update: the error signal at this neuron. */
+  lastGradient = 0;
+  /** Optimizer state for the bias (momentum velocity, Adam moments). */
+  velocity = 0;
+  firstMoment = 0;
+  secondMoment = 0;
 
   /**
    * Creates a new node with the provided id and activation function.
@@ -134,7 +143,29 @@ export class Activations {
     output: x => x,
     der: x => 1
   };
+  /** ReLU that keeps a small slope for negative inputs, so neurons can't get stuck at zero. */
+  public static LEAKY_RELU: ActivationFunction = {
+    output: x => (x > 0 ? x : 0.01 * x),
+    der: x => (x > 0 ? 1 : 0.01)
+  };
+  /** Gaussian error linear unit (tanh approximation), as used in transformers. */
+  public static GELU: ActivationFunction = {
+    output: x => 0.5 * x * (1 + Math.tanh(GELU_SCALE * (x + 0.044715 * x * x * x))),
+    der: x => {
+      const t = Math.tanh(GELU_SCALE * (x + 0.044715 * x * x * x));
+      return 0.5 * (1 + t) + 0.5 * x * (1 - t * t) * GELU_SCALE * (1 + 3 * 0.044715 * x * x);
+    }
+  };
 }
+
+const GELU_SCALE = Math.sqrt(2 / Math.PI);
+
+/** How accumulated gradients become weight changes. */
+export type Optimizer = 'sgd' | 'momentum' | 'adam';
+const MOMENTUM = 0.9;
+const ADAM_BETA1 = 0.9;
+const ADAM_BETA2 = 0.999;
+const ADAM_EPSILON = 1e-8;
 
 /** Build-in regularization functions */
 export class RegularizationFunction {
@@ -167,6 +198,12 @@ export class Link {
   /** Number of accumulated derivatives since the last update. */
   numAccumulatedDers = 0;
   regularization: RegularizationFunction;
+  /** Mean dE/dw from the most recent update. */
+  lastGradient = 0;
+  /** Optimizer state (momentum velocity, Adam moments). */
+  velocity = 0;
+  firstMoment = 0;
+  secondMoment = 0;
 
   /**
    * Constructs a link in the neural network initialized with random weight.
@@ -329,18 +366,48 @@ export function backProp(network: Node[][], target: number,
 }
 
 /**
+ * The change an optimizer makes for one parameter, given its mean gradient.
+ * SGD is handled separately to keep the original arithmetic exactly.
+ */
+function optimizerStep(state: { velocity: number; firstMoment: number; secondMoment: number },
+    gradient: number, learningRate: number, optimizer: Optimizer, step: number): number {
+  if (optimizer === 'momentum') {
+    state.velocity = MOMENTUM * state.velocity + gradient;
+    return learningRate * state.velocity;
+  }
+  state.firstMoment = ADAM_BETA1 * state.firstMoment + (1 - ADAM_BETA1) * gradient;
+  state.secondMoment = ADAM_BETA2 * state.secondMoment + (1 - ADAM_BETA2) * gradient * gradient;
+  const corrected = state.firstMoment / (1 - ADAM_BETA1 ** step);
+  const scale = state.secondMoment / (1 - ADAM_BETA2 ** step);
+  return learningRate * corrected / (Math.sqrt(scale) + ADAM_EPSILON);
+}
+
+/** Clears momentum and Adam state, e.g. when the optimizer changes. */
+export function resetOptimizerState(network: Node[][]): void {
+  forEachNode(network, true, node => {
+    node.velocity = node.firstMoment = node.secondMoment = 0;
+    node.inputLinks.forEach(link => { link.velocity = link.firstMoment = link.secondMoment = 0; });
+  });
+}
+
+/**
  * Updates the weights of the network using the previously accumulated error
- * derivatives.
+ * derivatives. `step` counts updates from 1 (Adam's bias correction needs it).
  */
 export function updateWeights(network: Node[][], learningRate: number,
-    regularizationRate: number) {
+    regularizationRate: number, optimizer: Optimizer = 'sgd', step = 1) {
   for (let layerIdx = 1; layerIdx < network.length; layerIdx++) {
     let currentLayer = network[layerIdx];
     for (let i = 0; i < currentLayer.length; i++) {
       let node = currentLayer[i];
       // Update the node's bias.
       if (node.numAccumulatedDers > 0) {
-        node.bias -= learningRate * node.accInputDer / node.numAccumulatedDers;
+        node.lastGradient = node.accInputDer / node.numAccumulatedDers;
+        if (optimizer === 'sgd') {
+          node.bias -= learningRate * node.accInputDer / node.numAccumulatedDers;
+        } else {
+          node.bias -= optimizerStep(node, node.lastGradient, learningRate, optimizer, step);
+        }
         node.accInputDer = 0;
         node.numAccumulatedDers = 0;
       }
@@ -353,9 +420,14 @@ export function updateWeights(network: Node[][], learningRate: number,
         let regulDer = link.regularization ?
             link.regularization.der(link.weight) : 0;
         if (link.numAccumulatedDers > 0) {
+          link.lastGradient = link.accErrorDer / link.numAccumulatedDers;
           // Update the weight based on dE/dw.
-          link.weight = link.weight -
-              (learningRate / link.numAccumulatedDers) * link.accErrorDer;
+          if (optimizer === 'sgd') {
+            link.weight = link.weight -
+                (learningRate / link.numAccumulatedDers) * link.accErrorDer;
+          } else {
+            link.weight -= optimizerStep(link, link.lastGradient, learningRate, optimizer, step);
+          }
           // Further update the weight based on regularization.
           let newLinkWeight = link.weight -
               (learningRate * regularizationRate) * regulDer;

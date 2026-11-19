@@ -27,6 +27,7 @@ const HIDABLE_PROPERTIES = new Set([
   'showTestData', 'discretize', 'playButton', 'stepButton', 'resetButton',
   'learningRate', 'activation', 'regularization', 'regularizationRate',
   'problem', 'dataset', 'percTrainData', 'noise', 'batchSize', 'numHiddenLayers',
+  'optimizer', 'showBackprop',
   'x', 'y', 'xSquared', 'ySquared', 'xTimesY', 'sinX', 'sinY',
   'numNodes1', 'numNodes2', 'numNodes3', 'numNodes4', 'numNodes5', 'numNodes6',
 ]);
@@ -36,7 +37,16 @@ export let activations: {[key: string]: nn.ActivationFunction} = {
   "relu": nn.Activations.RELU,
   "tanh": nn.Activations.TANH,
   "sigmoid": nn.Activations.SIGMOID,
-  "linear": nn.Activations.LINEAR
+  "linear": nn.Activations.LINEAR,
+  "leakyRelu": nn.Activations.LEAKY_RELU,
+  "gelu": nn.Activations.GELU
+};
+
+/** How gradients become weight changes; SGD is the original playground's update. */
+export let optimizers: {[key: string]: nn.Optimizer} = {
+  "sgd": "sgd",
+  "momentum": "momentum",
+  "adam": "adam"
 };
 
 /** A map between names and regularization functions. */
@@ -52,7 +62,45 @@ export let datasets: {[key: string]: dataset.DataGenerator} = {
   "xor": dataset.classifyXORData,
   "gauss": dataset.classifyTwoGaussData,
   "spiral": dataset.classifySpiralData,
+  // Points placed by hand live in the `points` setting, not in a generator.
+  "custom": () => [],
 };
+
+/** A point placed by hand on the decision-boundary plot. */
+export interface DrawnPoint { x: number; y: number; label: number; }
+export const MAX_DRAWN_POINTS = 400;
+
+/** Three bytes per point: x and y in steps of 0.05 within ±6, then the class. URL-safe base64. */
+export function encodePoints(points: DrawnPoint[]): string {
+  const bytes = new Uint8Array(Math.min(points.length, MAX_DRAWN_POINTS) * 3);
+  points.slice(0, MAX_DRAWN_POINTS).forEach((point, i) => {
+    const step = (v: number) => (Math.max(-120, Math.min(120, Math.round(v * 20))) + 256) % 256;
+    bytes.set([step(point.x), step(point.y), point.label > 0 ? 1 : 0], i * 3);
+  });
+  let binary = '';
+  bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** The inverse of encodePoints; anything malformed is dropped rather than trusted. */
+export function decodePoints(text: string | null): DrawnPoint[] {
+  if (!text || !/^[A-Za-z0-9_-]*$/.test(text)) return [];
+  let binary: string;
+  try {
+    binary = atob(text.replace(/-/g, '+').replace(/_/g, '/'));
+  } catch {
+    return [];
+  }
+  const points: DrawnPoint[] = [];
+  for (let i = 0; i + 2 < binary.length && points.length < MAX_DRAWN_POINTS; i += 3) {
+    const signed = (code: number) => (code > 127 ? code - 256 : code);
+    const x = signed(binary.charCodeAt(i)) / 20;
+    const y = signed(binary.charCodeAt(i + 1)) / 20;
+    if (Math.abs(x) > 6 || Math.abs(y) > 6) continue;
+    points.push({ x, y, label: binary.charCodeAt(i + 2) === 1 ? 1 : -1 });
+  }
+  return points;
+}
 
 /** A map between dataset names and functions that generate regression data. */
 export let regDatasets: {[key: string]: dataset.DataGenerator} = {
@@ -142,7 +190,10 @@ export class State {
     {name: "tutorial", type: Type.STRING},
     {name: "problem", type: Type.OBJECT, keyMap: problems},
     {name: "initZero", type: Type.BOOLEAN},
-    {name: "hideText", type: Type.BOOLEAN}
+    {name: "hideText", type: Type.BOOLEAN},
+    {name: "optimizer", type: Type.OBJECT, keyMap: optimizers},
+    {name: "showBackprop", type: Type.BOOLEAN},
+    {name: "points", type: Type.STRING}
   ];
 
   [key: string]: any;
@@ -176,6 +227,10 @@ export class State {
   dataset: dataset.DataGenerator = dataset.classifyCircleData;
   regDataset: dataset.DataGenerator = dataset.regressPlane;
   seed = '0.68936';
+  optimizer: nn.Optimizer = 'sgd';
+  showBackprop = false;
+  /** Hand-placed points (see encodePoints); only used by the custom dataset. */
+  points: string = null;
 
   /**
    * Deserializes the state from the url hash.
@@ -258,6 +313,7 @@ export class State {
       state.tutorial = null;
     }
     state.seed = state.seed.slice(0, 128);
+    if (state.points != null) state.points = encodePoints(decodePoints(state.points));
     state.numHiddenLayers = state.networkShape.length;
     seedrandom(state.seed, { global: true });
     return state;

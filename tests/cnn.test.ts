@@ -1,7 +1,8 @@
 // @vitest-environment node
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { CNN_LAYOUT, parseCnnWeights, parseSamples, preprocessDrawing, runCnn } from '../src/cnn/model';
+import { ATTACK_PIXEL_CAP, ATTACK_STEP_PIXELS, runAttack, startAttack, stepAttack, topDigit, type Attack } from '../src/cnn/attack';
+import { CNN_LAYOUT, inputGradient, parseCnnWeights, parseSamples, preprocessDrawing, runCnn, type CnnActivations } from '../src/cnn/model';
 
 function readModelFile(name: string): ArrayBuffer {
   const bytes = readFileSync(new URL(`../public/models/${name}`, import.meta.url));
@@ -267,5 +268,218 @@ describe('preprocessDrawing', () => {
   it('rejects alpha arrays that do not match the dimensions', () => {
     expect(() => preprocessDrawing(new Uint8ClampedArray(280 * 280 * 4), 280, 280)).toThrow(/one alpha byte per pixel/);
     expect(() => preprocessDrawing(new Uint8ClampedArray(0), 0, 0)).toThrow(RangeError);
+  });
+});
+
+/** Deterministic pseudo-random numbers in [0, 1). */
+function mulberry32(seed: number): () => number {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Which linear piece of the network an input falls in: every ReLU's on/off state and
+ * every max-pool window's winning position (first on a tie, as inputGradient routes it).
+ * Two inputs with the same piece are joined by a segment on which every logit is affine.
+ */
+function linearPiece(activations: CnnActivations): string {
+  const parts: number[] = [];
+  for (const name of ['conv1', 'conv2', 'dense'] as const) for (const value of activations[name]) parts.push(value > 0 ? 1 : 0);
+  for (const [name, planes, size] of [['conv1', 8, 28], ['conv2', 16, 14]] as const) {
+    const values = activations[name];
+    for (let c = 0; c < planes; c++) {
+      for (let y = 0; y < size; y += 2) {
+        for (let x = 0; x < size; x += 2) {
+          const i = c * size * size + y * size + x;
+          const max = Math.max(values[i], values[i + 1], values[i + size], values[i + size + 1]);
+          parts.push(values[i] === max ? 0 : values[i + 1] === max ? 1 : values[i + size] === max ? 2 : 3);
+        }
+      }
+    }
+  }
+  return parts.join('');
+}
+
+describe('inputGradient', () => {
+  it('matches central finite differences on the shipped weights', () => {
+    // The network is piecewise linear, so wherever x − ε and x + ε fall in the same
+    // linear piece as x, the central difference is the exact derivative up to rounding.
+    // The logits are stored as float32: below 32 their rounding step is 2^-19 ≈ 1.9e-6,
+    // so each carries an error of about 1e-6 (measured worst: 0.95e-6), and the central
+    // difference about 1e-6 / ε. The tolerance, 4e-6 / ε, is four times that.
+    const random = mulberry32(5);
+    const steps = [1e-2, 3e-3, 1e-3, 3e-4];
+    const checked = { noisy: 0, clean: 0 };
+    const attempts = { noisy: 0, clean: 0 };
+    const cases: [sample: number, digits: number[], noisy: boolean][] = [
+      [2, [2, 7, 3], true], [5, [5, 6, 8], true], [7, [7, 1, 9], true], [8, [8, 0, 3], true],
+      // Clean digits have exact ties in blank background, where the derivative does not
+      // exist (any change breaks the tie), so many of their pixels are skipped.
+      [3, [3, 8], false], [9, [9, 4], false],
+    ];
+    for (const [sample, digits, noisy] of cases) {
+      const kind = noisy ? 'noisy' : 'clean';
+      // A little noise everywhere breaks the ties of blank background between pool positions.
+      const input = noisy ? samples[sample].map(value => value + 0.02 + 0.03 * random()) : samples[sample].slice();
+      const activations = runCnn(weights, input);
+      const piece = linearPiece(activations);
+      for (const digit of digits) {
+        const gradient = inputGradient(weights, activations, digit);
+        expect(gradient).toHaveLength(784);
+        // The four most sensitive pixels, then random ones (stroke, edge and background).
+        const strongest = Array.from(gradient.keys()).sort((a, b) => Math.abs(gradient[b]) - Math.abs(gradient[a])).slice(0, 4);
+        const pixels = [...strongest, ...Array.from({ length: 8 }, () => Math.floor(random() * 784))];
+        for (const pixel of pixels) {
+          attempts[kind]++;
+          for (const epsilon of steps) {
+            const plus = input.slice();
+            const minus = input.slice();
+            plus[pixel] += epsilon;
+            minus[pixel] -= epsilon;
+            const above = runCnn(weights, plus);
+            const below = runCnn(weights, minus);
+            if (linearPiece(above) !== piece || linearPiece(below) !== piece) continue;
+            const numeric = (above.logits[digit] - below.logits[digit]) / (2 * epsilon);
+            expect(Math.abs(numeric - gradient[pixel]), `sample ${sample}, digit ${digit}, pixel ${pixel}, ε ${epsilon}`)
+              .toBeLessThanOrEqual(4e-6 / epsilon + 1e-4 * Math.abs(gradient[pixel]));
+            checked[kind]++;
+            break;
+          }
+        }
+      }
+    }
+    // 144 noisy and 48 clean pixel/digit pairs were tried; most must have been compared.
+    expect(checked.noisy).toBeGreaterThanOrEqual(0.75 * attempts.noisy);
+    expect(checked.clean).toBeGreaterThanOrEqual(0.25 * attempts.clean);
+  });
+
+  it('is nonzero on and around the strokes and supports the predicted digit there', () => {
+    for (const [digit, sample] of samples.entries()) {
+      const activations = runCnn(weights, sample);
+      const gradient = inputGradient(weights, activations, digit);
+      let support = 0;
+      let active = 0;
+      for (let i = 0; i < 784; i++) {
+        support += gradient[i] * sample[i];
+        if (gradient[i] !== 0) active++;
+      }
+      // Gradient × input: on balance the ink argues for the digit the network reads.
+      expect(support, `digit ${digit}`).toBeGreaterThan(0);
+      expect(active).toBeGreaterThan(100);
+    }
+  });
+
+  it('differentiates a difference of two scores in the same pass', () => {
+    const activations = runCnn(weights, samples[4]);
+    const four = inputGradient(weights, activations, 4);
+    const nine = inputGradient(weights, activations, 9);
+    const margin = inputGradient(weights, activations, 4, 9);
+    for (let i = 0; i < 784; i++) expect(margin[i]).toBeCloseTo(four[i] - nine[i], 5);
+    expect(inputGradient(weights, activations, 4, 4).every(value => value === 0)).toBe(true);
+  });
+
+  it('rejects bad digits and activations', () => {
+    const activations = runCnn(weights, samples[0]);
+    expect(() => inputGradient(weights, activations, 10)).toThrow(RangeError);
+    expect(() => inputGradient(weights, activations, 1.5)).toThrow(/0 to 9/);
+    expect(() => inputGradient(weights, activations, 1, -1)).toThrow(/against/);
+    expect(() => inputGradient(weights, { ...activations, conv2: new Float32Array(10) }, 1)).toThrow(/conv2/);
+  });
+});
+
+describe('fooling the network', () => {
+  const drawn = [
+    preprocessDrawing(drawStrokes(280, VERTICAL_STROKE, 22), 280, 280)!,
+    preprocessDrawing(drawStrokes(280, RING, 22), 280, 280)!,
+  ];
+  const runs: { original: Float32Array; digit: number; target: number; attack: Attack }[] = [];
+  for (const original of [...samples, ...drawn]) {
+    const digit = classify(original).digit;
+    for (let target = 0; target < 10; target++) {
+      if (target !== digit) runs.push({ original, digit, target, attack: runAttack(weights, original, target) });
+    }
+  }
+
+  it('reaches the target for most target choices within the pixel cap', () => {
+    const fooled = runs.filter(run => run.attack.status === 'fooled');
+    // All 108 succeed with the shipped weights; allow a little slack for a retrained model.
+    expect(fooled.length).toBeGreaterThanOrEqual(0.9 * runs.length);
+    for (const { attack, target } of fooled) {
+      expect(attack.order.length).toBeGreaterThan(0);
+      expect(attack.order.length).toBeLessThanOrEqual(ATTACK_PIXEL_CAP);
+      expect(topDigit(attack.activations.probabilities)).toBe(target);
+      expect(classify(attack.input).digit).toBe(target);
+    }
+    // A few pixels usually suffice: the median attack changes under 5% of the image.
+    const counts = fooled.map(run => run.attack.order.length).sort((a, b) => a - b);
+    expect(counts[Math.floor(counts.length / 2)]).toBeLessThan(0.05 * 784);
+    // A failure is only reported when the network really does not read the target.
+    for (const { attack, target } of runs.filter(run => run.attack.status === 'failed')) {
+      expect(attack.order.length).toBeLessThanOrEqual(ATTACK_PIXEL_CAP);
+      expect(topDigit(attack.activations.probabilities)).not.toBe(target);
+    }
+  });
+
+  it('never revisits a pixel and keeps every value within [0, 1]', () => {
+    for (const { original, attack } of runs) {
+      expect(new Set(attack.order).size).toBe(attack.order.length);
+      expect(attack.changes.reduce((count, change) => count + (change !== 0 ? 1 : 0), 0)).toBe(attack.order.length);
+      for (let i = 0; i < 784; i++) {
+        expect(attack.input[i]).toBeGreaterThanOrEqual(0);
+        expect(attack.input[i]).toBeLessThanOrEqual(1);
+        if (attack.changes[i] === 0) expect(attack.input[i]).toBe(original[i]);
+        else {
+          expect(attack.input[i]).toBe(attack.changes[i] > 0 ? 1 : 0);
+          expect(attack.input[i]).not.toBe(original[i]);
+        }
+      }
+    }
+  });
+
+  it('changes 1–3 pixels a step, each the way the gradient says helps, and stops once it reads the target', () => {
+    for (const [digit, target] of [[3, 8], [7, 1], [2, 4], [0, 6]]) {
+      const attack = startAttack(weights, samples[digit], target);
+      const seen = new Set<number>();
+      while (attack.status === 'running') {
+        expect(topDigit(attack.activations.probabilities)).not.toBe(target);
+        const logits = attack.activations.logits;
+        let rival = target === 0 ? 1 : 0;
+        for (let k = 0; k < 10; k++) if (k !== target && logits[k] > logits[rival]) rival = k;
+        const gradient = inputGradient(weights, attack.activations, target, rival);
+        const before = attack.input.slice();
+        const changed = stepAttack(weights, attack);
+        expect(changed.length).toBeGreaterThanOrEqual(1);
+        expect(changed.length).toBeLessThanOrEqual(ATTACK_STEP_PIXELS);
+        for (const pixel of changed) {
+          expect(seen.has(pixel)).toBe(false);
+          seen.add(pixel);
+          expect(attack.input[pixel]).toBe(gradient[pixel] > 0 ? 1 : 0);
+          expect(attack.input[pixel]).not.toBe(before[pixel]);
+        }
+      }
+      expect(attack.status, `${digit} → ${target}`).toBe('fooled');
+      expect(stepAttack(weights, attack)).toEqual([]);
+      expect(attack.steps).toBeLessThanOrEqual(attack.order.length);
+    }
+  });
+
+  it('reports failure when the cap is reached', () => {
+    const attack = runAttack(weights, samples[7], 4, 5);
+    expect(attack.status).toBe('failed');
+    expect(attack.order).toHaveLength(5);
+    expect(topDigit(attack.activations.probabilities)).not.toBe(4);
+  });
+
+  it('has nothing to do when the network already reads the target', () => {
+    const attack = startAttack(weights, samples[3], 3);
+    expect(attack.status).toBe('fooled');
+    expect(stepAttack(weights, attack)).toEqual([]);
+    expect(attack.order).toHaveLength(0);
+    expect(() => startAttack(weights, samples[3], 10)).toThrow(RangeError);
+    expect(() => startAttack(weights, new Float32Array(10), 1)).toThrow(/784/);
   });
 });

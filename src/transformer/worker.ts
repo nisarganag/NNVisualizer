@@ -1,4 +1,4 @@
-import { Gpt2Session, matrixRow, weightsFromBuffer, type Gpt2Manifest } from './gpt2';
+import { Gpt2Session, matrixRow, topTokens, weightsFromBuffer, type Gpt2Manifest } from './gpt2';
 import { MODEL_CACHE } from './config';
 
 /** Downloads, caches and runs GPT-2 off the main thread. */
@@ -6,7 +6,16 @@ import { MODEL_CACHE } from './config';
 export type TransformerRequest =
   | { type: 'load'; base: string }
   | { type: 'run'; id: number; tokens: number[] }
+  /** The logit lens at one position of the tokens from the latest run. */
+  | { type: 'lens'; id: number; position: number }
   | { type: 'weights'; layer: number; head: number };
+
+/** One stage of the logit lens: the likeliest next tokens if the model stopped there. */
+export interface LensRow {
+  /** Most likely first. */
+  ids: number[];
+  probabilities: number[];
+}
 
 /** Every intermediate value for the current tokens, packed into flat arrays. */
 export interface Trace {
@@ -29,12 +38,18 @@ export interface Trace {
   /** Final layer-normed vector at the last position. */
   finalHidden: Float32Array;
   logits: Float32Array;
+  /** [n] How unexpected each token was: −log2 p(token | earlier tokens). NaN for the first token, which has no context. */
+  surprisal: Float32Array;
+  /** [n] Each token's rank among all possible next tokens (1 = the model's top guess); 0 for the first token. */
+  ranks: Uint32Array;
 }
 
 export type TransformerResponse =
   | { type: 'progress'; loaded: number; total: number; cached: boolean }
   | { type: 'ready'; nLayer: number; nHead: number; nEmbd: number }
   | { type: 'result'; id: number; tokens: number[]; trace: Trace; reused: number; ms: number }
+  /** Rows: the embedding, then each block. Empty when the position is not in the latest tokens. */
+  | { type: 'lens'; id: number; tokens: number[]; position: number; rows: LensRow[]; ms: number }
   | { type: 'weights'; layer: number; head: number; q: Float32Array; k: Float32Array; v: Float32Array }
   | { type: 'error'; message: string };
 
@@ -116,11 +131,28 @@ function pack(current: Gpt2Session): Trace {
       }
     });
   });
+  // Scored once per position and kept by the session, so only new tokens cost anything.
+  const surprisal = new Float32Array(n).fill(Number.NaN);
+  const ranks = new Uint32Array(n);
+  current.surprisal().forEach((surprise, t) => {
+    if (!surprise) return;
+    surprisal[t] = surprise.bits;
+    ranks[t] = surprise.rank;
+  });
   return {
     n, embeddings, q, k, v, attended, output, mlp, scores, weights,
     finalHidden: current.finalHidden() ?? new Float32Array(nEmbd),
     logits: current.logits() ?? new Float32Array(current.weights.config.vocabSize),
+    surprisal, ranks,
   };
+}
+
+/** The top three next tokens after the embedding and after each block. */
+function lens(id: number, position: number) {
+  const started = performance.now();
+  const known = session !== null && position >= 0 && position < session.positions.length;
+  const rows = known ? session.lens(position).map(logits => topTokens(logits, 3)) : [];
+  scope.postMessage({ type: 'lens', id, tokens: session?.tokens ?? [], position, rows, ms: performance.now() - started });
 }
 
 function headWeights(layer: number, head: number) {
@@ -149,8 +181,10 @@ scope.onmessage = ({ data }) => {
       const reused = session.setTokens(data.tokens);
       const trace = pack(session);
       scope.postMessage({ type: 'result', id: data.id, tokens: data.tokens, trace, reused, ms: performance.now() - started },
-        [trace.embeddings, trace.q, trace.k, trace.v, trace.attended, trace.output, trace.mlp, trace.scores, trace.weights, trace.finalHidden, trace.logits]
-          .map(array => array.buffer as ArrayBuffer));
+        [trace.embeddings, trace.q, trace.k, trace.v, trace.attended, trace.output, trace.mlp, trace.scores, trace.weights, trace.finalHidden, trace.logits,
+          trace.surprisal, trace.ranks].map(array => array.buffer as ArrayBuffer));
+    } else if (data.type === 'lens') {
+      lens(data.id, data.position);
     } else if (data.type === 'weights') {
       headWeights(data.layer, data.head);
     }

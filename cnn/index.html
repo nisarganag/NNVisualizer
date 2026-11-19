@@ -33,6 +33,8 @@
       <symbol id="i-eraser" viewBox="0 0 24 24"><path d="m14.5 4.5 5 5-9 9H6l-2.5-2.5a1.4 1.4 0 0 1 0-2z"/><path d="M10 18.5h10M9 9l6 6"/></symbol>
       <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M3 6h3c5 0 7 12 12 12h3m-4-4 4 4-4 4M3 18h3c2 0 3-2 5-5m3-5c1-1 2-2 4-2h3m-4-4 4 4-4 4"/></symbol>
       <symbol id="i-external" viewBox="0 0 24 24"><path d="M8 16 18 6M8 6h10v10"/></symbol>
+      <symbol id="i-wand" viewBox="0 0 24 24"><path d="m4 20 10.5-10.5M12.5 7.5l3 3"/><path d="M17.5 3v4M15.5 5h4M19.5 12v3M18 13.5h3M10 3v2.5M8.75 4.25h2.5"/></symbol>
+      <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
     </defs>
   </svg>
   <noscript><p class="noscript">Enable JavaScript to draw and classify digits.</p></noscript>
@@ -89,7 +91,10 @@
             <button id="example-digit" class="button subtle" type="button"><svg class="icon" aria-hidden="true"><use href="#i-shuffle"/></svg>Try an example</button>
           </div>
           <p class="callout-note">Draw any digit from <strong>0 to 9</strong>. The network reads it as you draw.</p>
-          <figure class="input-figure"><figcaption>What the network sees <span>28 × 28 pixels, centered like the training data</span></figcaption><canvas id="input-view" class="pixel-view"></canvas></figure>
+          <div class="pixel-views">
+            <figure><figcaption>What the network sees <span class="when-drawn">28 × 28 pixels, centered like the training data</span><span class="when-fooled">Outlined pixels were changed: <span class="text-positive">violet</span> gained ink, <span class="text-negative">amber</span> lost it</span></figcaption><canvas id="input-view" class="pixel-view" role="img" aria-label="Your drawing as the network sees it, 28 by 28 pixels"></canvas></figure>
+            <figure><figcaption>What mattered most <span><span class="text-positive">Violet</span> ink supports the answer. <span class="text-negative">Amber</span> ink argues against it.</span></figcaption><canvas id="saliency-view" class="pixel-view" role="img" aria-label="Each pixel colored by how much its ink pushed the network toward its answer or away from it"></canvas></figure>
+          </div>
         </div>
       </section>
 
@@ -116,9 +121,20 @@
       <section class="panel" aria-labelledby="prediction-heading">
         <div class="panel-heading"><h2 id="prediction-heading">Prediction</h2></div>
         <div class="stage-body">
-          <div class="verdict" aria-live="polite"><span id="predicted-digit" class="verdict-digit readout">?</span><span id="predicted-confidence" class="verdict-confidence">Draw to begin</span></div>
+          <div id="verdict" class="verdict" aria-live="polite"><span id="predicted-digit" class="verdict-digit readout">?</span><span id="predicted-confidence" class="verdict-confidence">Draw to begin</span></div>
           <ol id="digit-bars" class="digit-bars" aria-label="Probability for each digit"></ol>
           <p class="callout-note">The tallest bar is the network’s <strong>answer</strong>. Close calls show where it’s unsure.</p>
+          <section class="fool-section" aria-labelledby="fool-heading">
+            <h3 id="fool-heading">Fool the network</h3>
+            <p class="fool-intro">Change a few pixels of what it sees, not your drawing, until it reads another digit.</p>
+            <div class="fool-controls">
+              <div class="control fool-target"><label for="fool-target">Make it read</label><div class="select"><select id="fool-target" class="readout" disabled><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option></select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
+              <button id="fool-start" class="button secondary" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#i-wand"/></svg>Fool it</button>
+            </div>
+            <p id="fool-status" class="fool-status" aria-live="polite"></p>
+            <button id="fool-undo" class="button subtle small" type="button" hidden><svg class="icon" aria-hidden="true"><use href="#i-undo"/></svg>Undo</button>
+            <p class="callout-note">A few pixels a person would barely notice can <strong>change the answer</strong>.</p>
+          </section>
         </div>
       </section>
     </div>

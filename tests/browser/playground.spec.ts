@@ -363,6 +363,69 @@ test('the classroom link opens the latest configuration without disturbing the a
   await classroom.close();
 });
 
+test('optimizers and the new activations train, and are kept in the link', async ({ page }) => {
+  await page.goto('/');
+  await ready(page);
+  for (const activation of ['leakyRelu', 'gelu']) {
+    await page.selectOption('#activations', activation);
+    await ready(page);
+    await step(page);
+    expect(Number.isFinite(Number(await page.locator('#loss-train').innerText()))).toBe(true);
+  }
+  for (const optimizer of ['momentum', 'adam', 'sgd']) {
+    await page.selectOption('#optimizer', optimizer);
+    await step(page);
+    expect(new URL(page.url()).hash).toContain(`optimizer=${optimizer}`);
+    expect(Number.isFinite(Number(await page.locator('#loss-train').innerText()))).toBe(true);
+  }
+});
+
+test('a dataset can be drawn by hand, erased, shared and restored', async ({ page }) => {
+  await page.goto('/');
+  await ready(page);
+  await page.locator('canvas[data-dataset="custom"]').click();
+  await ready(page);
+  await expect(page.locator('#paint-controls')).toBeVisible();
+  await expect(page.locator('#noise')).toBeDisabled();
+  await page.locator('label[for="show-test-data"]').click();
+  const plot = (await page.locator('#heatmap canvas').boundingBox())!;
+  const at = (x: number, y: number) => [plot.x + (x + 6) / 12 * plot.width, plot.y + (6 - y) / 12 * plot.height] as const;
+  for (const [x, y] of [[-3, 3], [-2, 3], [-3, 2]]) await page.mouse.click(...at(x, y));
+  await page.getByRole('radio', { name: 'Amber' }).click();
+  for (const [x, y] of [[3, -3], [2, -3], [3, -2]]) await page.mouse.click(...at(x, y));
+  const points = page.locator('#heatmap g.train circle, #heatmap g.test circle');
+  await expect(points).toHaveCount(6);
+  await expect(page.locator('#sample-count')).toHaveText('6');
+  await step(page);
+  await page.getByRole('radio', { name: 'Erase' }).click();
+  await page.mouse.click(...at(3, -3));
+  await expect(points).toHaveCount(5);
+  expect(new URL(page.url()).hash).toContain('dataset=custom');
+  await page.reload();
+  await ready(page);
+  await expect(points).toHaveCount(5);
+  await page.getByRole('button', { name: 'Clear points' }).click();
+  await expect(points).toHaveCount(0);
+  await step(page);
+});
+
+test('the backprop view shows how each weight is being pushed', async ({ page }) => {
+  await page.goto('/');
+  await ready(page);
+  await page.locator('label[for="show-backprop"]').click();
+  await expect(page.locator('.network-panel')).toHaveClass(/show-backprop/);
+  await expect(page.locator('.backprop-legend')).toBeVisible();
+  await page.getByRole('button', { name: 'Train one epoch', exact: true }).click();
+  // A single step replays the error travelling back from the output.
+  await expect.poll(() => page.evaluate(() => document.getAnimations()
+    .filter(animation => (animation.effect as KeyframeEffect)?.getKeyframes().some(frame => 'strokeDashoffset' in frame)).length))
+    .toBeGreaterThan(0);
+  await ready(page);
+  const widths = await page.locator('#network path.gradient-link').evaluateAll(paths => paths.map(path => parseFloat(getComputedStyle(path).strokeWidth)));
+  expect(Math.max(...widths)).toBeGreaterThan(Math.min(...widths));
+  expect(new URL(page.url()).hash).toContain('showBackprop=true');
+});
+
 test.describe('themes', () => {
   test.use({ colorScheme: 'dark' });
   test('follow the system, switch without resetting the experiment, and are remembered', async ({ page }) => {

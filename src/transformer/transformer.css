@@ -10,25 +10,38 @@
 .progress-track span { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--ink); transition: width .3s var(--ease-out); }
 #load-status { color: var(--ink-2); font-size: 12.5px; }
 
-.prompt-dock { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 14px 18px; padding: 14px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel); box-shadow: var(--shadow-float); }
+/* The prompt and its surprise strip on the left; the controls keep their own row so the strip never pushes them down. */
+.prompt-dock { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 14px 18px; padding: 14px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel); box-shadow: var(--shadow-float); }
+.dock-controls { display: flex; flex: 0 1 auto; align-items: flex-end; flex-wrap: wrap; gap: 14px 18px; min-width: 0; }
 .prompt-field { flex: 1 1 340px; min-width: 0; }
 .prompt-field label, .prompt-dock .control label { display: block; margin-bottom: 6px; color: var(--ink-3); font-size: 12.5px; font-weight: 500; }
 .prompt-field input { width: 100%; height: 44px; padding: 0 14px; border: 1px solid transparent; border-radius: var(--radius-control); background: var(--well); color: var(--ink); font-size: 16px; font-weight: 500; transition: background-color .2s, border-color .2s; }
 .prompt-field input:hover { background: var(--well-hover); }
 .prompt-field input:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-.prompt-examples { flex: 0 1 170px; }
+/* Widths rather than flex bases, so the controls group sizes to them and stays on one row when there is room. */
+.prompt-examples { flex: 0 1 auto; width: 170px; }
 .prompt-examples select { height: 44px; }
 .prompt-examples .select .icon { top: 15px; }
 .generate-button { height: 44px; padding: 0 18px 0 14px; }
-.dock-range { margin-top: 0; flex: 0 1 170px; }
+.dock-range { margin-top: 0; flex: 0 1 auto; width: 170px; }
 .dock-range label { font-size: 12.5px; color: var(--ink-3); }
-.sampling-control { display: flex; align-items: flex-end; gap: 12px; flex: 0 1 330px; }
+.sampling-control { display: flex; align-items: flex-end; gap: 12px; flex: 0 1 auto; width: 330px; }
 .sampling-heading { display: grid; gap: 6px; }
 .sampling-heading .field-label { font-size: 12.5px; }
-.segmented { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--well); }
-.segmented button { height: 30px; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: var(--ink-3); font-size: 12.5px; font-weight: 600; transition: background-color .25s, color .25s, box-shadow .25s; }
-.segmented button[aria-checked='true'] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / .1), 0 0 0 1px var(--line); }
-:root[data-theme='dark'] .segmented button[aria-checked='true'] { background: var(--well-hover); }
+
+/* The prompt as GPT-2 read it, each token tinted amber by how unexpected it was: none below 2 bits, strongest
+   from 14. Every step keeps ink text above 4.5:1 on the dock surface in both themes. */
+.surprise { --tint-1: 15%; --tint-2: 29%; --tint-3: 45%; --tint-4: 62%; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 18px; margin-top: 8px; padding: 0 14px; }
+:root[data-theme='dark'] .surprise { --tint-1: 18%; --tint-2: 30%; --tint-3: 41%; --tint-4: 52%; }
+.surprise-text { flex: 1 1 auto; min-width: 0; color: var(--ink); font-size: 14px; font-weight: 500; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; }
+.surprise-text span { padding: 2px 1px; border-radius: 4px; -webkit-box-decoration-break: clone; box-decoration-break: clone; transition: background-color .3s; }
+.surprise [data-surprise='1'] { background: color-mix(in oklab, var(--signal-negative) var(--tint-1), var(--surface)); }
+.surprise [data-surprise='2'] { background: color-mix(in oklab, var(--signal-negative) var(--tint-2), var(--surface)); }
+.surprise [data-surprise='3'] { background: color-mix(in oklab, var(--signal-negative) var(--tint-3), var(--surface)); }
+.surprise [data-surprise='4'] { background: color-mix(in oklab, var(--signal-negative) var(--tint-4), var(--surface)); }
+.surprise-legend { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-3); font-size: 12px; white-space: nowrap; cursor: help; }
+.surprise-scale { display: inline-flex; gap: 2px; }
+.surprise-scale i { width: 12px; height: 12px; border-radius: 3px; }
 
 .transformer-flow { display: grid; grid-template-columns: 270px minmax(0, 1fr) 300px; gap: 16px; margin-top: 16px; align-items: start; }
 .transformer-flow.is-empty .block-stage .stage-body, .transformer-flow.is-empty > :last-child .stage-body { opacity: .38; pointer-events: none; }
@@ -85,6 +98,30 @@ canvas.weights.is-loading { opacity: .15; }
 .candidate-value { color: var(--ink-2); font-size: 12.5px; text-align: right; }
 .sampling-summary { margin: 12px 0 4px; color: var(--ink-2); font-size: 13px; }
 
+/* How the guess forms: the prediction read out after the embedding and after every block. */
+.lens { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); container-type: inline-size; }
+.transformer-flow .lens h3 { margin-bottom: 2px; }
+.lens-context { margin-bottom: 10px; color: var(--ink-2); font-size: 13px; }
+.lens-list { display: grid; gap: 2px; margin: 0 -6px; padding: 0; list-style: none; transition: opacity .3s; }
+.lens.is-stale .lens-list { opacity: .45; }
+.lens-row { display: grid; grid-template-columns: 68px minmax(0, 1fr) 48px 44px; align-items: center; gap: 8px; width: 100%; padding: 4px 6px; border: 0; border-radius: 8px; background: none; color: var(--ink); font-size: 13.5px; text-align: left; transition: background-color .2s; }
+button.lens-row:hover, .lens-row[aria-current='true'] { background: var(--well); }
+.lens-row:focus-visible { outline-offset: 0; }
+.lens-stage { color: var(--ink-3); font-size: 12px; font-weight: 550; white-space: nowrap; }
+.lens-row[aria-current='true'] .lens-stage { color: var(--ink); }
+.lens-token { overflow: hidden; color: var(--ink-2); font-weight: 500; white-space: pre; text-overflow: ellipsis; }
+.lens-bar { height: 8px; overflow: hidden; border-radius: 4px; background: var(--well-hover); }
+.lens-bar i { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--ink-3); transform-origin: left; transition: width .45s var(--ease-out), background-color .3s; }
+.lens-value { color: var(--ink-3); font-size: 12px; text-align: right; }
+/* Rows that already guess what the model finally predicts. */
+.lens-row.is-final .lens-token { color: var(--ink); font-weight: 650; }
+.lens-row.is-final .lens-bar i { background: var(--ink); }
+.lens-row.is-final .lens-value { color: var(--ink-2); }
+/* When the panel spans the page, bars stretch like the candidates above. */
+@container (min-width: 440px) {
+  .lens-row { grid-template-columns: 76px minmax(0, 120px) minmax(0, 1fr) 50px; gap: 10px; }
+}
+
 .transformer-guide .guide-card h3 { margin-top: 0; }
 
 @keyframes token-in { from { opacity: 0; transform: translateX(-10px) scale(.96); } }
@@ -106,7 +143,11 @@ canvas.weights.is-loading { opacity: .15; }
   .block-strip { grid-template-columns: repeat(6, minmax(0, 1fr)); }
   .qkv-grid, .attention-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .prompt-dock { padding: 12px; }
-  .prompt-field, .prompt-examples, .dock-range, .sampling-control { flex: 1 1 100%; }
+  .prompt-field, .dock-controls, .prompt-examples, .dock-range, .sampling-control { flex: 1 1 100%; }
+  /* The sampling choice gets its own row above its slider, so labels never wrap. */
+  .sampling-control { flex-direction: column; align-items: stretch; width: auto; }
+  .sampling-control .segmented { display: flex; }
+  .sampling-control .segmented button { flex: 1; justify-content: center; }
   .generate-button { flex: 1 1 auto; }
   .loader-action { justify-content: flex-start; }
   .stage-meta { display: none; }

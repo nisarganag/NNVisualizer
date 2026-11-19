@@ -1,16 +1,17 @@
 import * as nn from './nn';
 
 export interface ModelState {
-  nodes: Array<{ id: string; bias: number }>;
-  links: Array<{ id: string; weight: number; isDead: boolean }>;
+  /** `gradient` is the mean derivative from the latest update, for the backprop view. */
+  nodes: Array<{ id: string; bias: number; gradient?: number }>;
+  links: Array<{ id: string; weight: number; isDead: boolean; gradient?: number }>;
 }
 
 export function captureModel(network: nn.Node[][]): ModelState {
   const model: ModelState = { nodes: [], links: [] };
   nn.forEachNode(network, true, node => {
-    model.nodes.push({ id: node.id, bias: node.bias });
+    model.nodes.push({ id: node.id, bias: node.bias, gradient: node.lastGradient });
     node.inputLinks.forEach(link => model.links.push({
-      id: link.id, weight: link.weight, isDead: link.isDead,
+      id: link.id, weight: link.weight, isDead: link.isDead, gradient: link.lastGradient,
     }));
   });
   return model;

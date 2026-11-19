@@ -7,7 +7,7 @@ import { signalRange, THEME_CHANGE_EVENT } from '../palette';
 import { Gpt2Tokenizer } from './tokenizer';
 import { applySampling, sample, type SamplingResult, type SamplingSettings } from './sampling';
 import { MAX_TOKENS, MODEL_BASE, MODEL_CACHE } from './config';
-import type { Trace, TransformerRequest, TransformerResponse } from './worker';
+import type { LensRow, Trace, TransformerRequest, TransformerResponse } from './worker';
 import type { Gpt2Manifest } from './gpt2';
 
 initializeSite();
@@ -45,6 +45,13 @@ let pending = false;
 let queued: number[] | null = null;
 const settings: SamplingSettings = { temperature: .8, mode: 'top-k', k: 5, p: .9 };
 let result: SamplingResult | null = null;
+/** The latest logit lens and the tokens and position it reads. */
+let lens: { tokens: number[]; position: number; rows: LensRow[] } | null = null;
+let lensId = 0;
+let lensInFlight = false;
+let lensWanted = false;
+let lensTimer: ReturnType<typeof setTimeout>;
+let typingTimer: ReturnType<typeof setTimeout> | undefined;
 
 function setStatus(message: string, kind: 'info' | 'error' = 'error') {
   statusLine.textContent = message;
@@ -139,6 +146,16 @@ function markFocus(canvas: HTMLCanvasElement, n: number, square = false) {
 
 const focusIndex = () => (trace ? (focus >= 0 && focus < trace.n ? focus : trace.n - 1) : -1);
 const displayToken = (id: number) => tokenizer?.tokenText(id) ?? '';
+const quoteToken = (id: number) => `“${displayToken(id).replace(/\n/g, '↵').trim() || '␣'}”`;
+const percent = (p: number) => (p < .001 ? '<0.1%' : `${(p * 100).toFixed(1)}%`);
+
+/** Tint steps for surprise: none below 2 bits, then one step every 4 bits, strongest from 14. */
+const surpriseLevel = (bits: number) => (bits < 2 ? 0 : bits < 6 ? 1 : bits < 10 ? 2 : bits < 14 ? 3 : 4);
+/** How unexpected token i was, given the tokens before it. */
+function surpriseLabel(i: number): string {
+  const bits = trace.surprisal[i];
+  return Number.isNaN(bits) ? 'No context yet' : `${bits.toFixed(1)} bits of surprise, rank ${trace.ranks[i].toLocaleString()}`;
+}
 
 /* ---------- Rendering ---------- */
 
@@ -180,8 +197,26 @@ function renderAttentionBars() {
     item.querySelector<HTMLElement>('.token-attention i').style.width = `${Math.round(weight * 100)}%`;
     item.classList.toggle('is-focus', i === index);
     item.classList.toggle('is-masked', trace !== null && i > index);
-    item.title = trace ? (i > index ? 'After the focused token, so it is masked' : `Gets ${(weight * 100).toFixed(1)}% of the focused token’s attention in this head`) : '';
+    const attention = i > index ? 'After the focused token, so it is masked' : `Gets ${(weight * 100).toFixed(1)}% of the focused token’s attention in this head`;
+    item.title = trace ? `${attention}\n${surpriseLabel(i)}` : '';
   });
+}
+
+/** The prompt under the input, each token tinted by how unexpected it was. */
+function renderSurprise() {
+  $('surprise').hidden = !trace;
+  if (!trace) return;
+  $('surprise-text').replaceChildren(...traceTokens.flatMap((id, i) => {
+    const text = displayToken(id).replace(/\n/g, '↵');
+    // The space before a word stays untinted, so tints sit on the words.
+    const space = text.length > 1 && text.startsWith(' ') ? ' ' : '';
+    const span = document.createElement('span');
+    span.textContent = text.slice(space.length);
+    span.title = surpriseLabel(i);
+    const bits = trace.surprisal[i];
+    if (!Number.isNaN(bits)) span.dataset.surprise = String(surpriseLevel(bits));
+    return space ? [space, span] : [span];
+  }));
 }
 
 function renderEmbeddings() {
@@ -367,15 +402,89 @@ function renderCandidates() {
   paint(finalCanvas, 1, EMBD, (_r, c) => trace.finalHidden[c], 'diverging', robustScale(trace.finalHidden));
 }
 
+/* ---------- How the guess forms ---------- */
+
+/** Whether a lens reads the current tokens at the focused position. */
+const lensIsCurrent = (candidate: { tokens: number[]; position: number } | null) =>
+  candidate !== null && trace !== null && candidate.position === focusIndex() && candidate.tokens.join() === traceTokens.join();
+
+/**
+ * One row per stage: the embedding, then each block (a button that opens it).
+ * `reveal` plays the rows in top-down, so the answer visibly forms.
+ */
+function renderLens(reveal = false) {
+  const current = lensIsCurrent(lens);
+  $('lens').classList.toggle('is-stale', lens !== null && !current);
+  const list = $('lens-list');
+  list.setAttribute('aria-busy', String(lens !== null && !current));
+  if (!lens) return;
+  if (!list.children.length) {
+    for (let r = 0; r <= N_LAYER; r++) {
+      const item = document.createElement('li');
+      const row = document.createElement(r === 0 ? 'div' : 'button');
+      row.className = 'lens-row';
+      row.innerHTML = `<span class="lens-stage">${r === 0 ? 'Embedding' : `Block ${r}`}</span><span class="lens-token"></span><span class="lens-bar" aria-hidden="true"><i></i></span><span class="lens-value readout"></span>`;
+      if (row instanceof HTMLButtonElement) {
+        row.type = 'button';
+        row.addEventListener('click', () => selectLayer(r - 1));
+      }
+      item.append(row);
+      list.append(item);
+    }
+  }
+  const { rows, tokens: read, position } = lens;
+  const final = rows[N_LAYER].ids[0];
+  const max = Math.max(...rows.map(row => row.probabilities[0]));
+  $('lens-context').textContent = `What could follow ${quoteToken(read[position])}, block by block, before temperature and sampling`;
+  const rowElements = Array.from(list.querySelectorAll<HTMLElement>('.lens-row'));
+  rowElements.forEach((row, r) => {
+    const { ids, probabilities } = rows[r];
+    row.querySelector('.lens-token').textContent = displayToken(ids[0]).replace(/\n/g, '↵').trim() || '␣';
+    row.querySelector<HTMLElement>('.lens-bar i').style.width = `${(probabilities[0] / max) * 100}%`;
+    row.querySelector('.lens-value').textContent = percent(probabilities[0]);
+    row.classList.toggle('is-final', ids[0] === final);
+    if (r > 0) row.setAttribute('aria-current', String(r - 1 === layer));
+    const stage = r === 0 ? 'Straight from the embedding' : r === N_LAYER ? `After block ${r}, the model’s actual prediction` : `After block ${r}`;
+    row.title = `${stage}: ${ids.map((id, j) => `${quoteToken(id)} ${percent(probabilities[j])}`).join(', ')}`;
+  });
+  if (!reveal || reducedMotion.matches) return;
+  const easing = 'cubic-bezier(.22, 1, .36, 1)';
+  rowElements.forEach((row, r) => {
+    const bar = row.querySelector<HTMLElement>('.lens-bar i');
+    for (const element of [row, bar]) element.getAnimations().forEach(animation => animation.cancel());
+    row.animate([{ opacity: 0, transform: 'translateY(-3px)' }, { opacity: 1, transform: 'none' }], { duration: 260, delay: r * 30, easing, fill: 'backwards' });
+    bar.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: 420, delay: r * 30 + 40, easing, fill: 'backwards' });
+  });
+}
+
+/** Asks for the lens once the focus and tokens settle: thirteen full-vocabulary readouts take about half a second. */
+function scheduleLens() {
+  renderLens();
+  clearTimeout(lensTimer);
+  lensTimer = setTimeout(requestLens, 150);
+}
+
+function requestLens() {
+  // A run (or one about to start after typing) changes the tokens; its result schedules the lens again.
+  if (!ready || !trace || pending || typingTimer !== undefined || lensIsCurrent(lens)) return;
+  // One at a time, so lenses never queue up ahead of a run; ask again when it returns.
+  if (lensInFlight) { lensWanted = true; return; }
+  lensInFlight = true;
+  lensWanted = false;
+  send({ type: 'lens', id: ++lensId, position: focusIndex() });
+}
+
 function renderAll() {
   flow.classList.toggle('is-empty', !trace);
   renderTokenList();
+  renderSurprise();
   renderEmbeddings();
   renderBlockStrip();
   renderHeadGrid();
   renderHeadDetail();
   renderMlp();
   renderCandidates();
+  renderLens();
 }
 
 /* ---------- Interaction ---------- */
@@ -388,6 +497,7 @@ function setFocus(index: number) {
     if (canvas.parentElement.querySelector(`.focus-row[data-for="${canvas.id}"]`)) markFocus(canvas, trace.n, canvas.classList.contains('square'));
   });
   renderReadout();
+  scheduleLens();
 }
 
 function selectLayer(l: number) {
@@ -397,6 +507,7 @@ function selectLayer(l: number) {
   renderHeadDetail();
   renderMlp();
   renderAttentionBars();
+  renderLens();
 }
 
 function selectHead(h: number) {
@@ -441,10 +552,14 @@ function updateTokens() {
   request(tokens);
 }
 
-let typingTimer: ReturnType<typeof setTimeout>;
 promptInput.addEventListener('input', () => {
   clearTimeout(typingTimer);
-  typingTimer = setTimeout(updateTokens, 180);
+  // The next run brings new tokens; a lens now would only delay it.
+  clearTimeout(lensTimer);
+  typingTimer = setTimeout(() => {
+    typingTimer = undefined;
+    updateTokens();
+  }, 180);
 });
 
 $<HTMLSelectElement>('example-select').addEventListener('change', event => {
@@ -539,11 +654,21 @@ worker.onmessage = ({ data }: MessageEvent<TransformerResponse>) => {
     flow.setAttribute('aria-busy', String(pending));
     renderAll();
     arriving = -1;
+    scheduleLens();
+  } else if (data.type === 'lens') {
+    lensInFlight = false;
+    // Replies for tokens or a position that have since changed are dropped.
+    if (data.rows.length && lensIsCurrent(data)) {
+      lens = data;
+      renderLens(true);
+    }
+    if (lensWanted) requestLens();
   } else if (data.type === 'weights') {
     headWeights = data;
     renderWeights();
   } else {
     pending = false;
+    lensInFlight = false;
     flow.setAttribute('aria-busy', 'false');
     setStatus(data.message);
     loadButton.hidden = false;

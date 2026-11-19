@@ -4,7 +4,7 @@ Checked on 2026-11-19.
 
 ## Automated checks
 
-The final `npm run check` passes with **32 unit, reference, model and state tests and 23 Chromium browser tests**, plus TypeScript checking and the Vite production build, on Node.js 26.13.1 (macOS arm64). The previous studio version was also verified on Node.js 24.22.3, matching the recommended Vercel major version; the theme and motion changes add no Node-specific code and were not re-run on 24.
+The final `npm run check` passes with **55 unit, reference, model and state tests and 30 Chromium browser tests**, plus TypeScript checking and the Vite production build, on Node.js 26.13.1 (macOS arm64). The previous studio version was also verified on Node.js 24.22.3, matching the recommended Vercel major version; the theme and motion changes add no Node-specific code and were not re-run on 24.
 
 - The reference fixture compares training/test losses and selected parameters at epochs 0, 1, and 10 against values independently captured from the live TensorFlow Playground, to 12 decimal places.
 - Engine checks cover a hand-calculated gradient update, partial batches across epochs, parameter edits, data replacement, zero-input models, and numerical divergence.
@@ -39,6 +39,13 @@ Added the same day and checked against the production build.
 - **CNN (Digits):** 99.39% accuracy on the 10,000 MNIST test images (61 errors), using the shipped weights read back through the page's own inference code. On 1,404 synthetic brush-stroke digits rendered through the full drawing pipeline it was 97.4% correct, and 99.1% on 230 harder variants. Retraining reproduces byte-identical weights. Unit tests cover parsing, the shipped examples, activation shapes, preprocessing (blank input, centering) and synthetic strokes. A browser test draws a 1 and a 0 with the mouse, inspects feature maps, clears, and loads an example; another runs it by touch on a phone.
 - **GPT-2 (Transformer):** the tokenizer matches the reference ids. Float32 inference reproduces the original model's greedy continuation of "The dog" token for token. The shipped 8-bit weights reproduce the same 18 tokens, and next-token KL divergence from float32 is 0.0004–0.0007 on the checked prompts (probabilities within about 0.3 percentage points). Plain per-row 8-bit quantization was measured at 0.0132 and rejected. A browser test loads the model from the production build, checks that the top five candidates for "The capital of France is" match the float32 model in order, exercises blocks, heads, temperature, top-p and generation, and confirms that a reload opens the cached model without asking.
 - **Site:** all three pages were checked for horizontal overflow and header collisions at thirteen widths from 320px to 1920px, in both themes. Navigating between models preserves the playground experiment.
+
+## Explainer additions
+
+- **Playground:** SGD keeps the original update; the reference parity test still passes. Momentum and Adam are checked against hand-computed updates, GELU's derivative against finite differences, and hand-placed points against an encode/decode round trip with malformed input rejected. Browser tests cover every optimizer and new activation, drawing, erasing, sharing, reloading and clearing a dataset, and the backprop view's per-weight gradients and step replay.
+- **Digits:** the input gradient matches central finite differences wherever the network is locally linear. The attack reached its target for all 108 sample and target pairs (median 18 pixel changes) and for 98.9% of 360 distorted samples, never changing a pixel twice.
+- **Transformer:** the lens's last row equals the model's logits exactly; incremental surprisal equals a from-scratch computation; " Paris" after "The capital of France is" scores 4.8 bits against 21.2 for " banana". A browser test types a misspelt prompt and checks that the typo is marked most surprising.
+- **Navigation:** pages no longer crossfade between models; Chrome aborted that fade with an unhandled error when clicks came in quick succession. Repeated runs of all model-page tests pass (32 of 32).
 
 ## Scope
 

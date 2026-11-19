@@ -94,7 +94,12 @@ function initializeModelSwitcher(): void {
   if (indicator) indicator.style.transition = 'none';
   place();
   requestAnimationFrame(() => requestAnimationFrame(() => { if (indicator) indicator.style.transition = ''; }));
-  new ResizeObserver(place).observe(nav);
+  // On resize the highlight jumps straight to its new place, so it never trails outside the page.
+  new ResizeObserver(() => {
+    if (indicator) indicator.style.transition = 'none';
+    place();
+    requestAnimationFrame(() => { if (indicator) indicator.style.transition = ''; });
+  }).observe(nav);
   document.fonts?.ready.then(place);
 
   // The current model's link returns to the top instead of reloading (which would reset training).

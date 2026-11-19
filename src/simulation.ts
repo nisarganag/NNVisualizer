@@ -9,6 +9,7 @@ import type { NetworkConfig, ParameterKind, SimulationSnapshot, TrainingSettings
 const activations = {
   relu: nn.Activations.RELU, tanh: nn.Activations.TANH,
   sigmoid: nn.Activations.SIGMOID, linear: nn.Activations.LINEAR,
+  leakyRelu: nn.Activations.LEAKY_RELU, gelu: nn.Activations.GELU,
 };
 const regularizations = {
   none: null, L1: nn.RegularizationFunction.L1, L2: nn.RegularizationFunction.L2,
@@ -17,6 +18,9 @@ const regularizations = {
 export class TrainingEngine {
   private readonly network: nn.Node[][];
   private epoch = 0;
+  /** Weight updates so far with the current optimizer (Adam's bias correction counts them). */
+  private updates = 0;
+  private optimizer: nn.Optimizer = 'sgd';
 
   constructor(
     private readonly config: NetworkConfig,
@@ -34,13 +38,20 @@ export class TrainingEngine {
 
   step(settings: TrainingSettings): void {
     this.epoch++;
+    const optimizer = settings.optimizer ?? 'sgd';
+    if (optimizer !== this.optimizer) {
+      // Momentum and moment estimates belong to the previous optimizer.
+      nn.resetOptimizerState(this.network);
+      this.optimizer = optimizer;
+      this.updates = 0;
+    }
     this.trainData.forEach((point, i) => {
       nn.forwardProp(this.network, constructFeatures(this.config.inputIds, point.x, point.y));
       nn.backProp(this.network, point.label, nn.Errors.SQUARE);
       // Deliberately match the reference: incomplete batches carry their
       // accumulated gradients into the next epoch rather than being flushed.
       if ((i + 1) % settings.batchSize === 0) {
-        nn.updateWeights(this.network, settings.learningRate, settings.regularizationRate);
+        nn.updateWeights(this.network, settings.learningRate, settings.regularizationRate, optimizer, ++this.updates);
       }
     });
   }
@@ -83,7 +94,9 @@ export class TrainingEngine {
     const lossTrain = this.loss(this.trainData);
     const lossTest = this.loss(this.testData);
     const model = captureModel(this.network);
-    let diverged = !Number.isFinite(lossTrain) || !Number.isFinite(lossTest)
+    // An empty set (possible with a hand-drawn dataset) has no loss rather than a broken one.
+    let diverged = (this.trainData.length > 0 && !Number.isFinite(lossTrain))
+      || (this.testData.length > 0 && !Number.isFinite(lossTest))
       || model.nodes.some(node => !Number.isFinite(node.bias))
       || model.links.some(link => !Number.isFinite(link.weight));
     const boundaries: Record<string, Float64Array> = {};

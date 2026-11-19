@@ -101,7 +101,7 @@ test.describe('transformer', () => {
     await page.getByRole('radio', { name: 'Top-p' }).click();
     await expect(page.locator('#sampling-name')).toHaveText('Keep probability p');
 
-    await page.getByRole('button', { name: 'Generate' }).click();
+    await page.getByRole('button', { name: 'Generate', exact: true }).click();
     await expect(page.locator('#token-list .token')).toHaveCount(6);
     await expect(page.locator('#prompt-input')).toHaveValue(/^The capital of France is./);
 

@@ -57,12 +57,14 @@ The GPT-2 weights in `public/models/gpt2-v2/` total about 130 MB, split into fil
 
 ### Playground
 
-- Classification datasets: circle, XOR, two Gaussians, spiral.
+- Classification datasets: circle, XOR, two Gaussians, spiral, or **draw your own**: choose the tile, then click the decision boundary plot to place violet or amber points (or erase them). The network keeps learning as points are added, and the points travel in the share link (up to 400).
 - Regression datasets: plane and multiple Gaussian regions.
 - Seven selectable features: x₁, x₂, x₁², x₂², x₁x₂, sin(x₁), sin(x₂).
 - Zero to six hidden layers, with one to eight neurons per layer; bias-only models with all features disabled also work.
 - Play, pause, single-epoch stepping, reset, regeneration, noise, training/test split, and batch size.
-- Tanh, ReLU, sigmoid, and linear activation; no regularization, L1, or L2.
+- Tanh, ReLU, Leaky ReLU, GELU, sigmoid, and linear activation; no regularization, L1, or L2.
+- Optimizers: SGD (the original playground's update, unchanged), Momentum, and Adam.
+- **Show backpropagation**: each connection gets a twin that shows how the last update pushed that weight (violet up, amber down, thicker for larger gradients). While training, the dashes flow backward from the output; a single step replays the forward pass and then the error travelling back.
 - Live neuron and output heatmaps, signed/weighted connections, editable weights and biases, train/test losses and history.
 - Test-data visibility, discrete output, neuron hover inspection, and shareable URL settings.
 - Classroom control visibility, `initZero=true`, `hideText=true`, and optional bundled lessons.
@@ -87,6 +89,8 @@ Hover over a connection or a neuron's small bias square and click to edit it. Ed
 - A scratchpad for mouse, touch and pen, classified live while you draw, plus **Try an example** (MNIST test digits) and **Clear**.
 - The drawing is preprocessed exactly like MNIST: the ink is scaled into a 20×20 box and centered by mass in 28×28. The page shows that 28×28 input.
 - Every layer is drawn: 8 and 16 feature maps from two 3×3 convolutions, both max-pooling layers, the 64-neuron dense layer, and probabilities for 0–9. Hovering or focusing a feature map shows the filter weights behind it.
+- **What mattered most**: the ink that drove the answer, from the network's exact input gradient (gradient × input). Violet ink supports the answer; amber argues against it.
+- **Fool the network**: pick a digit and the page flips a few pixels of what the network sees, one small step at a time, until it reads that digit, usually after about 18 pixel changes. Changed pixels are outlined, and Undo restores the original.
 - About 52,000 parameters, trained in this repository on MNIST with rotation, scale, shift and stroke-width augmentation (`scripts/train-mnist-cnn.mjs`). Nothing you draw leaves the browser.
 
 ### Transformer
@@ -99,6 +103,8 @@ Hover over a connection or a neuron's small bias square and click to edit it. Ed
 - GPT-2 small (124M parameters, OpenAI, MIT license) with its byte-level BPE tokenizer. Type any prompt or choose an example; the model loads with one click and is cached afterwards.
 - Views for tokens and IDs, token and position embeddings, a 12-block overview, the 12 heads of any block, and for any head its queries, keys, values, weights, masked scaled scores, softmax attention and output. Also every token's 3,072 MLP activations, the final hidden state, and the next-token probabilities.
 - Temperature, top-k and top-p update the probabilities instantly; **Generate** samples a token and appends it.
+- **How the guess forms**: what GPT-2 would predict if it stopped after the embedding and after each of the 12 blocks (a "logit lens"), for any token you focus. Select a row to open that block.
+- **Surprising words**: the prompt is tinted by how unexpected each token was to the model, in bits, so typos and odd word choices stand out.
 - The official weights are converted with `scripts/convert-gpt2.mjs` to 8-bit blocks of 64 with float16 scales. Eight embedding columns are kept exact, because GPT-2's final hidden state has a few outsized dimensions that would otherwise magnify rounding. Greedy decoding matches the float32 model token for token, and next-token probabilities stay within about 0.3 percentage points.
 - Inspired by [Transformer Explainer](https://poloclub.github.io/transformer-explainer/) (Georgia Tech Polo Club); the design and code here are independent.
 

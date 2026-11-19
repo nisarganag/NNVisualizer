@@ -11,7 +11,8 @@
  *   → dense 64 + ReLU → dense 10 → softmax                   (52,138 parameters)
  *
  * Every tensor is a flat Float32Array in row-major order with the channel first,
- * e.g. conv1[c * 784 + y * 28 + x].
+ * e.g. conv1[c * 784 + y * 28 + x]. inputGradient runs the exact backward pass from
+ * those activations to the input, for the saliency view and the pixel attack.
  *
  * Pure TypeScript with no DOM dependencies: it runs in the browser, in workers and in
  * Node. scripts/train-mnist-cnn.mjs imports runCnn from this file (Node strips the
@@ -285,12 +286,152 @@ export function runCnn(weights: CnnWeights, input: Float32Array): CnnActivations
   return { input: inputCopy, conv1, pool1, conv2, pool2, dense, logits, probabilities };
 }
 
-function checkWeights(weights: CnnWeights): void {
+function checkWeights(weights: CnnWeights, caller = 'runCnn'): void {
   for (const [layer, kind, count] of TENSOR_SIZES) {
     const values = weights?.[layer]?.[kind];
     if (!values || values.length !== count) {
-      throw new Error(`runCnn: ${layer}.${kind} should hold ${count} values but has ${values?.length ?? 'none'}.`);
+      throw new Error(`${caller}: ${layer}.${kind} should hold ${count} values but has ${values?.length ?? 'none'}.`);
     }
+  }
+}
+
+// ---------------------------------------------------------------------------------
+// Backward pass: how much each input pixel moves a score
+// ---------------------------------------------------------------------------------
+
+// Scratch buffers for inputGradient, which is synchronous like runCnn. The padded
+// borders collect gradient for the convolutions' zero padding, which is then dropped.
+const gradientPool2 = new Float64Array(FLAT);
+const gradientPool1 = new Float64Array(C1 * P1_PADDED * P1_PADDED);
+const gradientInput = new Float64Array(PADDED * PADDED);
+
+const ACTIVATION_SIZES = [
+  ['conv1', C1 * SIZE * SIZE], ['pool1', C1 * P1 * P1], ['conv2', C2 * P1 * P1], ['pool2', FLAT], ['dense', HIDDEN],
+] as const;
+
+/**
+ * The exact gradient of one score with respect to the 784 input pixels, by
+ * backpropagation through the activations runCnn returned for that input:
+ *
+ *   ∂ logits[digit] / ∂ input,  or with `against`:  ∂ (logits[digit] − logits[against]) / ∂ input.
+ *
+ * A ReLU passes gradient where its output is > 0. A max-pool window sends its gradient
+ * to the first of its positions (top left, top right, bottom left, bottom right) that
+ * holds the pooled value: the same choice the trainer's backward pass makes, in the
+ * order runCnn's Math.max reads the window. The convolutions are cross-correlations with
+ * zero padding 1, so the gradient flows back through each kernel in the orientation the
+ * forward pass applied it. The network is piecewise linear, so this is the derivative
+ * itself wherever no ReLU input is exactly 0 and no pool window is tied.
+ *
+ * At most about 120k multiply-adds, a third of a forward pass.
+ * @param activations runCnn's result for the input of interest.
+ * @param digit the score to differentiate, 0..9.
+ * @param against optional second score, 0..9, to subtract.
+ * @returns 784 values, row-major 28×28: how fast the score grows as each pixel gains ink.
+ * @throws Error if a digit is out of range or an array has the wrong length.
+ */
+export function inputGradient(weights: CnnWeights, activations: CnnActivations, digit: number, against?: number): Float32Array {
+  checkDigit(digit, 'digit');
+  if (against !== undefined) checkDigit(against, 'against');
+  checkWeights(weights, 'inputGradient');
+  for (const [name, count] of ACTIVATION_SIZES) {
+    const values = activations?.[name];
+    if (!values || values.length !== count) {
+      throw new Error(`inputGradient: activations.${name} should hold ${count} values but has ${values?.length ?? 'none'}; pass runCnn's result.`);
+    }
+  }
+  const { conv1, pool1, conv2, pool2, dense } = activations;
+
+  // Output and dense layers: the score's gradient reaches dense unit j through row j of
+  // the output weights, passes its ReLU where the unit is active, and spreads over
+  // every flattened pool2 value through the unit's dense weights.
+  const wo = weights.output.weights;
+  const wd = weights.dense.weights;
+  const toPool2 = gradientPool2;
+  toPool2.fill(0);
+  for (let j = 0; j < HIDDEN; j++) {
+    if (!(dense[j] > 0)) continue;
+    let d = wo[digit * HIDDEN + j];
+    if (against !== undefined) d -= wo[against * HIDDEN + j];
+    if (d === 0) continue;
+    const row = j * FLAT;
+    for (let i = 0; i < FLAT; i++) toPool2[i] += d * wd[row + i];
+  }
+
+  // pool2 → conv2 → pool1: each window's gradient goes to its max, passes the ReLU if
+  // that max is > 0, then back through the 8×3×3 weights onto the pool1 values that
+  // conv2[f][y][x] read, pool1[c][y + ky − 1][x + kx − 1] (padded index y + ky, x + kx).
+  const w2 = weights.conv2.weights;
+  const toPool1 = gradientPool1;
+  toPool1.fill(0);
+  for (let f = 0; f < C2; f++) {
+    for (let py = 0; py < P2; py++) {
+      for (let px = 0; px < P2; px++) {
+        const index = f * P2 * P2 + py * P2 + px;
+        const d = toPool2[index];
+        const max = pool2[index];
+        if (d === 0 || !(max > 0)) continue;
+        const position = windowArgmax(conv2, f * P1 * P1 + 2 * py * P1 + 2 * px, P1, max);
+        const y = 2 * py + (position >> 1);
+        const x = 2 * px + (position & 1);
+        for (let c = 0; c < C1; c++) {
+          const k = f * C1 * 9 + c * 9;
+          const p = c * P1_PADDED * P1_PADDED + y * P1_PADDED + x;
+          for (let ky = 0; ky < 3; ky++) {
+            const row = p + ky * P1_PADDED;
+            toPool1[row] += d * w2[k + ky * 3];
+            toPool1[row + 1] += d * w2[k + ky * 3 + 1];
+            toPool1[row + 2] += d * w2[k + ky * 3 + 2];
+          }
+        }
+      }
+    }
+  }
+
+  // pool1 → conv1 → input, the same way with the 3×3 conv1 kernels.
+  const w1 = weights.conv1.weights;
+  const toInput = gradientInput;
+  toInput.fill(0);
+  for (let f = 0; f < C1; f++) {
+    for (let py = 0; py < P1; py++) {
+      for (let px = 0; px < P1; px++) {
+        const d = toPool1[f * P1_PADDED * P1_PADDED + (py + 1) * P1_PADDED + px + 1];
+        const max = pool1[f * P1 * P1 + py * P1 + px];
+        if (d === 0 || !(max > 0)) continue;
+        const position = windowArgmax(conv1, f * SIZE * SIZE + 2 * py * SIZE + 2 * px, SIZE, max);
+        const y = 2 * py + (position >> 1);
+        const x = 2 * px + (position & 1);
+        const k = f * 9;
+        for (let ky = 0; ky < 3; ky++) {
+          const row = (y + ky) * PADDED + x;
+          toInput[row] += d * w1[k + ky * 3];
+          toInput[row + 1] += d * w1[k + ky * 3 + 1];
+          toInput[row + 2] += d * w1[k + ky * 3 + 2];
+        }
+      }
+    }
+  }
+
+  const gradient = new Float32Array(SIZE * SIZE);
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) gradient[y * SIZE + x] = toInput[(y + 1) * PADDED + x + 1];
+  }
+  return gradient;
+}
+
+/**
+ * Which position of the 2×2 window starting at flat index `start` holds `max`:
+ * 0 top left, 1 top right, 2 bottom left, 3 bottom right; ties go to the first.
+ */
+function windowArgmax(values: Float32Array, start: number, stride: number, max: number): number {
+  if (values[start] === max) return 0;
+  if (values[start + 1] === max) return 1;
+  return values[start + stride] === max ? 2 : 3;
+}
+
+function checkDigit(value: number, name: string): void {
+  if (!Number.isInteger(value) || value < 0 || value >= CLASSES) {
+    throw new RangeError(`inputGradient: ${name} must be an integer from 0 to 9 (got ${value}).`);
   }
 }
 

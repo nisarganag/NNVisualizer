@@ -94,32 +94,38 @@
       <div class="prompt-field">
         <label for="prompt-input">Prompt</label>
         <input id="prompt-input" type="text" maxlength="240" autocomplete="off" spellcheck="false" value="The best way to learn something new is to">
-      </div>
-      <div class="control prompt-examples"><label for="example-select">Examples</label><div class="select"><select id="example-select">
-        <option value="">Choose…</option>
-        <option>The best way to learn something new is to</option>
-        <option>The capital of France is</option>
-        <option>Once upon a time, there was a little robot who</option>
-        <option>A neural network learns by</option>
-        <option>In the middle of the night, she heard</option>
-        <option>def fibonacci(n):</option>
-      </select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
-      <button id="generate-button" class="button primary generate-button" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#i-sparkle"/></svg><span>Generate</span></button>
-      <div class="range-control dock-range">
-        <label for="temperature"><span>Temperature</span><span class="range-value"><span id="temperature-value">0.8</span></span></label>
-        <input type="range" id="temperature" min="0.1" max="2" step="0.1" value="0.8">
-      </div>
-      <div class="sampling-control">
-        <div class="sampling-heading">
-          <span class="field-label" id="sampling-label">Sampling</span>
-          <div class="segmented" role="radiogroup" aria-labelledby="sampling-label">
-            <button type="button" role="radio" aria-checked="true" data-mode="top-k">Top-k</button>
-            <button type="button" role="radio" aria-checked="false" data-mode="top-p">Top-p</button>
-          </div>
+        <div id="surprise" class="surprise" role="group" aria-label="How surprising each token was" hidden>
+          <p id="surprise-text" class="surprise-text"></p>
+          <p class="surprise-legend" title="How unlikely GPT-2 found each token, given the ones before it. Each extra bit means half as likely."><span class="surprise-scale" aria-hidden="true"><i data-surprise="1"></i><i data-surprise="2"></i><i data-surprise="3"></i><i data-surprise="4"></i></span>Stronger amber, more surprising</p>
         </div>
+      </div>
+      <div class="dock-controls">
+        <div class="control prompt-examples"><label for="example-select">Examples</label><div class="select"><select id="example-select">
+          <option value="">Choose…</option>
+          <option>The best way to learn something new is to</option>
+          <option>The capital of France is</option>
+          <option>Once upon a time, there was a little robot who</option>
+          <option>A neural network learns by</option>
+          <option>In the middle of the night, she heard</option>
+          <option>def fibonacci(n):</option>
+        </select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
+        <button id="generate-button" class="button primary generate-button" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#i-sparkle"/></svg><span>Generate</span></button>
         <div class="range-control dock-range">
-          <label for="sampling-value"><span id="sampling-name">Keep the top k</span><span class="range-value"><span id="sampling-number">5</span></span></label>
-          <input type="range" id="sampling-value" min="1" max="20" step="1" value="5">
+          <label for="temperature"><span>Temperature</span><span class="range-value"><span id="temperature-value">0.8</span></span></label>
+          <input type="range" id="temperature" min="0.1" max="2" step="0.1" value="0.8">
+        </div>
+        <div class="sampling-control">
+          <div class="sampling-heading">
+            <span class="field-label" id="sampling-label">Sampling</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="sampling-label">
+              <button type="button" role="radio" aria-checked="true" data-mode="top-k">Top-k</button>
+              <button type="button" role="radio" aria-checked="false" data-mode="top-p">Top-p</button>
+            </div>
+          </div>
+          <div class="range-control dock-range">
+            <label for="sampling-value"><span id="sampling-name">Keep the top k</span><span class="range-value"><span id="sampling-number">5</span></span></label>
+            <input type="range" id="sampling-value" min="1" max="20" step="1" value="5">
+          </div>
         </div>
       </div>
     </section>
@@ -181,6 +187,12 @@
           <p id="sampling-summary" class="sampling-summary"></p>
           <p class="callout-note">Lower the <strong>temperature</strong> for safer choices; raise it for surprises.</p>
           <figure><figcaption>Final hidden state <span>scored against all 50,257 tokens</span></figcaption><canvas id="final-hidden" class="matrix strip"></canvas></figure>
+          <section id="lens" class="lens" aria-labelledby="lens-heading">
+            <h3 id="lens-heading">How the guess forms</h3>
+            <p id="lens-context" class="lens-context">What could follow the last token, block by block, before temperature and sampling</p>
+            <ol id="lens-list" class="lens-list" aria-labelledby="lens-heading" aria-describedby="lens-context"></ol>
+            <p class="callout-note"><strong>Early blocks</strong> guess loosely. Watch the answer settle by the last block.</p>
+          </section>
         </div>
       </section>
     </div>

@@ -6,7 +6,7 @@
 .cnn-workbench > :nth-child(3) { grid-area: prediction; }
 .cnn-workbench figure { position: relative; margin: 0; }
 .cnn-workbench figcaption { margin-bottom: 8px; color: var(--ink-2); font-size: 12.5px; font-weight: 650; }
-.cnn-workbench figcaption span { display: block; margin-top: 2px; color: var(--ink-3); font-weight: 400; }
+.cnn-workbench figcaption > span { display: block; margin-top: 2px; color: var(--ink-3); font-weight: 400; }
 .cnn-workbench h3 { font-size: 14px; font-weight: 680; }
 
 .pad-frame { position: relative; width: 100%; max-width: 264px; aspect-ratio: 1; margin: 4px auto 0; border-radius: 18px; background-color: var(--stage); background-image: radial-gradient(var(--grid-dot) 1px, transparent 1.3px); background-size: calc(100% / 14) calc(100% / 14); box-shadow: inset 0 0 0 1px var(--line-strong); }
@@ -14,8 +14,12 @@
 .pad-hint { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; color: var(--ink-3); font-family: var(--font-math); font-size: 17px; font-style: italic; pointer-events: none; }
 .pad-actions { display: flex; justify-content: center; gap: 8px; margin-top: 14px; }
 .pixel-view { display: block; image-rendering: pixelated; }
-.input-figure { margin-top: 18px !important; padding-top: 16px; border-top: 1px solid var(--line); }
-#input-view { width: 112px; height: 112px; border-radius: 10px; background: var(--stage); box-shadow: inset 0 0 0 1px var(--line); }
+/* What the network sees, and which of those pixels mattered: captions on top, images level below. */
+.pixel-views { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.pixel-views figure { display: flex; flex-direction: column; justify-content: space-between; }
+.pixel-views .pixel-view { width: 100%; max-width: 112px; height: auto; aspect-ratio: 1; border-radius: 10px; background: var(--stage); box-shadow: inset 0 0 0 1px var(--line); }
+.pixel-views .when-fooled, .cnn-workbench.is-fooled .when-drawn { display: none; }
+.cnn-workbench.is-fooled .when-fooled { display: block; }
 
 .layer-row { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid var(--line); }
 .layer-row:first-child { padding-top: 4px; border-top: 0; }
@@ -49,6 +53,19 @@
 .digit-bar.is-best .bar-track i { background: var(--ink); }
 .digit-bar.is-best .digit-label { color: var(--ink); font-weight: 720; }
 .digit-value { color: var(--ink-2); font-size: 12.5px; text-align: right; }
+
+/* Fool the network */
+.fool-section { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.fool-intro { margin-top: 2px; color: var(--ink-3); font-size: 12.5px; line-height: 1.4; }
+.fool-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin-top: 12px; }
+.fool-target { width: 92px; }
+.fool-target .select select { font-size: 14px; }
+.fool-target .select:has(select:disabled) { opacity: .32; }
+.fool-target .select select:disabled { cursor: default; }
+.fool-status { margin-top: 12px; color: var(--ink-2); font-size: 13px; line-height: 1.45; }
+.fool-status:empty { margin-top: 0; }
+.fool-section .button.small { margin-top: 10px; }
+.fool-section .callout-note { margin-top: 18px; }
 
 @keyframes verdict-in { from { opacity: 0; transform: translateY(8px) scale(.92); } }
 

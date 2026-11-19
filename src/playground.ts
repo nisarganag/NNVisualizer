@@ -23,7 +23,11 @@ import {
   problems,
   regularizations,
   getKeyFromValue,
-  Problem
+  Problem,
+  optimizers,
+  decodePoints,
+  encodePoints,
+  MAX_DRAWN_POINTS
 } from "./state";
 import {Example2D, shuffle} from "./dataset";
 import {AppendingLineChart} from "./linechart";
@@ -75,6 +79,8 @@ let HIDABLE_CONTROLS = [
   ["Noise level", "noise"],
   ["Batch size", "batchSize"],
   ["# of hidden layers", "numHiddenLayers"],
+  ["Optimizer", "optimizer"],
+  ["Backpropagation view", "showBackprop"],
 ];
 
 class Player {
@@ -171,6 +177,12 @@ let workerBusy = false;
 let workerFailed = false;
 let queuedSteps = 0;
 let editingParameter = false;
+/** Mean gradient of each weight at its latest update, for the backprop view. */
+let gradients = new Map<string, number>();
+/** Play the forward-then-backward wave when the next manual step arrives. */
+let waveAfterStep = false;
+/** What a click on the plot places when drawing a dataset: 1 violet, -1 amber, 0 erase. */
+let paintLabel = 1;
 const trainingWorker = new Worker(new URL('./training.worker.ts', import.meta.url), { type: 'module' });
 
 /** Info messages appear only if work takes noticeable time; errors appear at once. */
@@ -201,6 +213,7 @@ trainingWorker.onmessage = ({ data }: MessageEvent<WorkerResponse>) => {
   }
   const snapshot = data.snapshot;
   applyModel(network, snapshot.model);
+  gradients = new Map(snapshot.model.links.map(link => [link.id, link.gradient ?? 0]));
   boundary = {};
   for (const [id, grid] of Object.entries(snapshot.boundaries)) {
     boundary[id] = Array.from({ length: snapshot.density }, (_, row) =>
@@ -217,6 +230,10 @@ trainingWorker.onmessage = ({ data }: MessageEvent<WorkerResponse>) => {
     setStatus('');
   }
   updateUI();
+  if (waveAfterStep) {
+    waveAfterStep = false;
+    playBackpropWave();
+  }
   if (queuedSteps > 0) {
     queuedSteps--;
     oneStep();
@@ -232,6 +249,12 @@ trainingWorker.onerror = () => {
   setStatus('The training worker could not load. Refresh the page to try again.');
 };
 
+/**
+ * The event being handled. Under Vite's dev pre-bundling, d3 v3's live `d3.event`
+ * binding can read as null, so fall back to the browser's current event.
+ */
+const currentEvent = <T extends Event>() => ((d3.event as Event | null) ?? window.event) as T;
+
 function syncAccessibility() {
   d3.select('#add-layers').property('disabled', state.numHiddenLayers >= 6);
   d3.select('#remove-layers').property('disabled', state.numHiddenLayers <= 0);
@@ -240,14 +263,14 @@ function syncAccessibility() {
     .attr('aria-label', function() { return this.parentElement.getAttribute('title') + ' dataset'; })
     .attr('aria-pressed', function() { return String(this.classList.contains('selected')); })
     .on('keydown', function() {
-      const event = d3.event as KeyboardEvent;
+      const event = currentEvent<KeyboardEvent>();
       if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); this.click(); }
     });
   for (const id of Object.keys(INPUTS)) {
     d3.select(`#canvas-${id}`).attr('role', 'button').attr('tabindex', 0)
       .attr('aria-label', `Toggle input ${id}`).attr('aria-pressed', String(Boolean(state[id])))
       .on('keydown', function() {
-        const event = d3.event as KeyboardEvent;
+        const event = currentEvent<KeyboardEvent>();
         if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); this.click(); }
       });
   }
@@ -301,6 +324,31 @@ function makeGUI() {
     postCommand({ type: 'data', trainData, testData }, true);
 
   });
+
+  // Drawing a dataset: choose what a click places, then click the plot.
+  d3.selectAll('#paint-controls [data-paint]').on('click', function() {
+    paintLabel = Number(this.dataset.paint);
+    d3.selectAll('#paint-controls [data-paint]').attr('aria-checked', function() { return String(Number(this.dataset.paint) === paintLabel); });
+  });
+  d3.select('#clear-points').on('click', () => {
+    state.points = encodePoints([]);
+    updateDrawnData();
+  });
+  document.querySelector('#heatmap').addEventListener('click', event => placePoint(event as MouseEvent));
+
+  let optimizerSelect = d3.select('#optimizer').on('change', function() {
+    state.optimizer = optimizers[this.value];
+    state.serialize();
+  });
+  optimizerSelect.property('value', state.optimizer);
+
+  let backpropToggle = d3.select('#show-backprop').on('change', function() {
+    state.showBackprop = this.checked;
+    state.serialize();
+    d3.select('.network-panel').classed('show-backprop', state.showBackprop);
+  });
+  backpropToggle.property('checked', state.showBackprop);
+  d3.select('.network-panel').classed('show-backprop', state.showBackprop);
 
   let dataThumbnails = d3.selectAll("canvas[data-dataset]");
   dataThumbnails.on("click", function() {
@@ -487,6 +535,9 @@ function updateBiasesUI(network: nn.Node[][]) {
 function updateWeightsUI(network: nn.Node[][], container) {
   // While training, CSS animates the signal flow continuously; weight changes
   // ease in through stroke transitions instead of jumping each epoch.
+  // Gradients span orders of magnitude, so scale them by a high percentile.
+  const magnitudes = Array.from(gradients.values(), Math.abs).sort((a, b) => a - b);
+  const gradientScale = magnitudes.length ? magnitudes[Math.floor(.9 * (magnitudes.length - 1))] || magnitudes.at(-1) : 0;
   for (let layerIdx = 1; layerIdx < network.length; layerIdx++) {
     let currentLayer = network[layerIdx];
     // Update all the nodes in this layer.
@@ -500,6 +551,15 @@ function updateWeightsUI(network: nn.Node[][], container) {
               "stroke": colorScale(link.weight)
             })
             .datum(link);
+        // The update moves a weight against its gradient: violet up, amber down.
+        const gradient = gradients.get(link.id) ?? 0;
+        const strength = gradientScale > 0 ? Math.min(1, Math.abs(gradient) / gradientScale) : 0;
+        container.select(`#gradient${link.source.id}-${link.dest.id}`)
+            .style({
+              "stroke": colorScale(gradientScale > 0 ? Math.max(-1, Math.min(1, -gradient / gradientScale)) : 0),
+              "stroke-width": .8 + 3.2 * strength,
+              "--strength": (.2 + .8 * strength).toFixed(3)
+            });
       }
     }
   }
@@ -744,6 +804,8 @@ function drawNetwork(network: nn.Node[][]): void {
   const container = svg.append('g').attr('class', 'core').attr('transform', 'translate(3,3)');
   // Connections sit beneath their hit targets and the nodes.
   const linkLayer = container.append('g').attr('class', 'links');
+  // How each weight is being pushed, shown in the backprop view.
+  const gradientLayer = container.append('g').attr('class', 'gradients');
   const coordinates: Record<string, { cx: number; cy: number }> = {};
   // Leaves room for the widest typeset label, sin(x₂), plus a margin.
   const inputX = 100;
@@ -783,7 +845,7 @@ function drawNetwork(network: nn.Node[][]): void {
 
   for (let layerIndex = 1; layerIndex < network.length; layerIndex++) {
     network[layerIndex].forEach(node => node.inputLinks.forEach((link, index) => {
-      drawLink(link, coordinates, linkLayer, container, layerIndex - 1, index, node.inputLinks.length);
+      drawLink(link, coordinates, linkLayer, gradientLayer, container, layerIndex - 1, index, node.inputLinks.length);
     }));
   }
   // Bias hit targets remain above connection hit targets; canvases have their own layer.
@@ -939,13 +1001,13 @@ function updateHoverCard(type: HoverType, nodeOrLink?: nn.Node | nn.Link,
       }
     });
     input.on("keypress", () => {
-      if ((d3.event as any).keyCode === 13) {
+      if (currentEvent<KeyboardEvent>().key === 'Enter') {
         editingParameter = false;
         updateHoverCard(type, nodeOrLink, coordinates);
       }
     });
     input.on('keydown', () => {
-      if ((d3.event as KeyboardEvent).key === 'Escape') {
+      if (currentEvent<KeyboardEvent>().key === 'Escape') {
         editingParameter = false;
         updateHoverCard(null);
       }
@@ -973,7 +1035,7 @@ function updateHoverCard(type: HoverType, nodeOrLink?: nn.Node | nn.Link,
 
 function drawLink(
     input: nn.Link, node2coord: {[id: string]: {cx: number, cy: number}},
-    linkLayer, container, column: number, index: number, length: number) {
+    linkLayer, gradientLayer, container, column: number, index: number, length: number) {
   let line = linkLayer.append("path");
   let source = node2coord[input.source.id];
   let dest = node2coord[input.dest.id];
@@ -991,6 +1053,12 @@ function drawLink(
   line.attr({
     class: "link",
     id: "link" + input.source.id + "-" + input.dest.id,
+    "data-column": column,
+    d: diagonal(datum, 0)
+  });
+  gradientLayer.append("path").attr({
+    class: "gradient-link",
+    id: "gradient" + input.source.id + "-" + input.dest.id,
     "data-column": column,
     d: diagonal(datum, 0)
   });
@@ -1061,7 +1129,33 @@ function constructInput(x: number, y: number): number[] {
   return input;
 }
 
+/**
+ * One training step, slowed down: the forward pass lights the connections from
+ * inputs to output, then the error signal travels back from the output.
+ */
+function playBackpropWave(): void {
+  if (reducedMotion.matches || !network) return;
+  const columns = network.length - 1;
+  const forward = 110;
+  document.querySelectorAll<SVGPathElement>('#network path.link').forEach(path => {
+    const column = Number(path.dataset.column);
+    path.animate([{ strokeOpacity: .3 }, { strokeOpacity: 1, offset: .35 }, { strokeOpacity: .3 }],
+      { duration: 480, delay: column * forward, easing: 'ease-in-out' });
+  });
+  const backwardStart = columns * forward + 260;
+  document.querySelectorAll<SVGPathElement>('#network path.gradient-link').forEach(path => {
+    const column = Number(path.dataset.column);
+    const length = Math.ceil(path.getTotalLength()) + 1;
+    // A negative offset draws the stroke from its end, so the error runs output to input.
+    path.animate([
+      { strokeDasharray: `${length} ${length}`, strokeDashoffset: -length },
+      { strokeDasharray: `${length} ${length}`, strokeDashoffset: 0 },
+    ], { duration: 560, delay: backwardStart + (columns - 1 - column) * 150, easing: EASE_OUT, fill: 'backwards' });
+  });
+}
+
 function oneStep(manual = false): void {
+  if (manual && state.showBackprop) waveAfterStep = true;
   if (workerBusy) {
     if (manual) queuedSteps++;
     return;
@@ -1071,6 +1165,7 @@ function oneStep(manual = false): void {
     learningRate: +state.learningRate,
     regularizationRate: +state.regularizationRate,
     batchSize: +state.batchSize,
+    optimizer: state.optimizer,
   } });
 }
 
@@ -1149,6 +1244,86 @@ function initTutorial() {
 /** Thumbnail samples, kept so a theme change can repaint without drawing new random data. */
 const thumbnailSamples = new Map<HTMLCanvasElement, Example2D[]>();
 
+const isDrawing = () => state.problem === Problem.CLASSIFICATION && state.dataset === datasets.custom;
+
+/** Shows the paint tools while the hand-drawn dataset is selected. */
+function syncDrawMode(): void {
+  const drawing = isDrawing();
+  d3.select('#paint-controls').property('hidden', !drawing);
+  d3.select('#plot-hint').property('hidden', !drawing);
+  d3.select('#heatmap').classed('is-drawing', drawing);
+  // Noise and regeneration only apply to generated patterns.
+  d3.select('#noise').property('disabled', drawing);
+  d3.select('#data-regen-button').property('disabled', drawing);
+}
+
+function placePoint(event: MouseEvent): void {
+  if (!isDrawing()) return;
+  const canvas = document.querySelector<HTMLCanvasElement>('#heatmap canvas');
+  const bounds = canvas.getBoundingClientRect();
+  const fx = (event.clientX - bounds.left) / bounds.width;
+  const fy = (event.clientY - bounds.top) / bounds.height;
+  if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
+  const x = -6 + 12 * fx;
+  const y = 6 - 12 * fy;
+  const points = decodePoints(state.points);
+  if (paintLabel === 0) {
+    let nearest = -1;
+    let best = .8 * .8;
+    points.forEach((point, i) => {
+      const distance = (point.x - x) ** 2 + (point.y - y) ** 2;
+      if (distance < best) { best = distance; nearest = i; }
+    });
+    if (nearest < 0) return;
+    points.splice(nearest, 1);
+  } else {
+    if (points.length >= MAX_DRAWN_POINTS) {
+      setStatus(`You can place up to ${MAX_DRAWN_POINTS} points.`, 'info');
+      return;
+    }
+    points.push({ x, y, label: paintLabel });
+  }
+  state.points = encodePoints(points);
+  updateDrawnData();
+}
+
+/** New points take effect immediately; the network keeps its weights and keeps learning. */
+function updateDrawnData(): void {
+  state.serialize();
+  generateData(true);
+  postCommand({ type: 'data', trainData, testData }, true);
+  renderDrawnThumbnail();
+}
+
+function renderDrawnThumbnail(): void {
+  const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-dataset="custom"]');
+  if (!canvas) return;
+  const size = 112;
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext('2d');
+  context.clearRect(0, 0, size, size);
+  const points = decodePoints(state.points);
+  if (!points.length) {
+    // An empty plot invites the first point.
+    context.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--ink-3').trim() || '#888';
+    context.lineWidth = 6;
+    context.lineCap = 'round';
+    context.beginPath();
+    context.moveTo(size / 2, size * .3);
+    context.lineTo(size / 2, size * .7);
+    context.moveTo(size * .3, size / 2);
+    context.lineTo(size * .7, size / 2);
+    context.stroke();
+  }
+  points.forEach(point => {
+    context.fillStyle = colorScale(point.label);
+    context.beginPath();
+    context.arc(size * (point.x + 6) / 12, size * (6 - point.y) / 12, 5, 0, 2 * Math.PI);
+    context.fill();
+  });
+}
+
 function drawDatasetThumbnails(reuseSamples = false) {
   function renderThumbnail(canvas: HTMLCanvasElement, dataGenerator: (count: number, noise: number) => Example2D[]) {
     // Drawn at twice the displayed size for sharp dots on high-density screens.
@@ -1177,6 +1352,11 @@ function drawDatasetThumbnails(reuseSamples = false) {
     for (let dataset in datasets) {
       let canvas: any =
           document.querySelector(`canvas[data-dataset=${dataset}]`);
+      if (dataset === 'custom') {
+        renderDrawnThumbnail();
+        d3.select(canvas.parentNode as Element).style("display", null);
+        continue;
+      }
       let dataGenerator = datasets[dataset];
       renderThumbnail(canvas, dataGenerator);
     }
@@ -1224,6 +1404,17 @@ function generateData(firstTime = false) {
 
   }
   seedrandom(state.seed, { global: true });
+  syncDrawMode();
+  if (isDrawing()) {
+    const points = decodePoints(state.points);
+    // A fixed, evenly spread assignment keeps each point in the same set as more are added.
+    const isTest = (i: number) => (i * 0.6180339887498949) % 1 >= state.percTrainData / 100;
+    trainData = points.filter((_point, i) => !isTest(i));
+    testData = points.filter((_point, i) => isTest(i));
+    heatMap.updatePoints(trainData);
+    heatMap.updateTestPoints(state.showTestData ? testData : []);
+    return;
+  }
   let numSamples = (state.problem === Problem.REGRESSION) ?
       NUM_SAMPLES_REGRESS : NUM_SAMPLES_CLASSIFY;
   let generator = state.problem === Problem.CLASSIFICATION ?
