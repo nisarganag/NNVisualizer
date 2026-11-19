@@ -1,0 +1,36 @@
+{
+  "name": "nnvisualizer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "An interactive neural network playground with browser-based training.",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "check": "npm run test && npm run build && npm run test:e2e"
+  },
+  "dependencies": {
+    "@fontsource-variable/manrope": "5.3.0",
+    "@fontsource/ibm-plex-mono": "5.3.0",
+    "d3": "3.5.17",
+    "seedrandom": "3.0.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.1",
+    "@types/d3": "3.5.53",
+    "@types/node": "^24.0.0",
+    "@types/seedrandom": "^3.0.8",
+    "typescript": "7.0.2",
+    "vite": "8.3.8",
+    "vitest": "5.1.1"
+  }
+}

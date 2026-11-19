@@ -1,0 +1,16 @@
+{
+  "repository": "https://github.com/tensorflow/playground",
+  "commit": "02469bd3751764b20486015d4202b792af5362a6",
+  "license": "Apache-2.0",
+  "referenceFiles": {
+    "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "index.html": "5ec908134061ff8563630bd99e8b1543b780b655bcd723f1d8172f97c8e53da2",
+    "styles.css": "8cedd4362e81a572a42ad5c6b0d5eb373541d0fc26a63b64d5db32821b719c2c",
+    "src/nn.ts": "eca97b4c0ca3787aa7d516fb8a560107f70f4809d036af1fb2db49b4bb27c9db",
+    "src/dataset.ts": "fe6a7bf6eea34d548497b70857e69d09ae77ccdba8922e0a3b58c9085dd0f182",
+    "src/state.ts": "ea761ac3e05c60570bb4c2203588e8a0614534c95a73b9ed4e67c372c0a01b66",
+    "src/heatmap.ts": "54380527bfd9962b47a32577426e40902cf2a1ea8203b855bc43f5b83f7ffac5",
+    "src/linechart.ts": "3ce780d9b9d3c8360ff340e43490a7eae093d003dede01f7bc1946d4b225381c",
+    "src/playground.ts": "5d5c4b2c4e6329d1d656a295c86a213dbcb8e2bd01bd5f7377e453698e9f55a2"
+  }
+}

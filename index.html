@@ -1,0 +1,160 @@
+<!doctype html>
+<!-- Copyright 2016 Google Inc. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0c1017">
+  <meta name="description" content="Make learning visible. Build, train, and explore a real neural network in an interactive visual studio.">
+  <meta property="og:title" content="NNVisualizer — Neural Network Playground">
+  <meta property="og:description" content="Shape the data. Build the layers. Watch it learn.">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <title>NNVisualizer — Neural Network Playground</title>
+</head>
+<body>
+  <!-- NNVisualizer: original studio interface; underlying simulation adapted under Apache-2.0. -->
+  <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="m9 5 11 7-11 7z" fill="currentColor" stroke="none"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14" stroke-width="4"/></symbol>
+      <symbol id="i-step" viewBox="0 0 24 24"><path d="m5 6 10 6-10 6z"/><path d="M19 5v14"/></symbol>
+      <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 10a8 8 0 1 1 1 8M4 4v6h6"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="3"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M8 16 18 6M8 6h10v10"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M3 6h3c5 0 7 12 12 12h3m-4-4 4 4-4 4M3 18h3c2 0 3-2 5-5m3-5c1-1 2-2 4-2h3m-4-4 4 4-4 4"/></symbol>
+      <symbol id="i-network" viewBox="0 0 24 24"><path d="m6 7 6 5 6-5M6 17l6-5 6 5"/><circle cx="4" cy="5" r="2"/><circle cx="4" cy="19" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="20" cy="19" r="2"/></symbol>
+      <symbol id="i-signal" viewBox="0 0 24 24"><path d="M2 12h4l3-8 6 16 3-8h4"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 5v15M3 4h5a4 4 0 0 1 4 2 4 4 0 0 1 4-2h5v14h-5a4 4 0 0 0-4 2 4 4 0 0 0-4-2H3z"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h8m4 0h4M4 17h4m4 0h8"/><circle cx="14" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    </defs>
+  </svg>
+  <noscript><p class="noscript">Enable JavaScript to explore and train your neural network.</p></noscript>
+
+  <header class="app-header">
+    <div class="header-inner">
+      <button class="brand" data-scroll="workspace-heading" aria-label="Back to playground">
+        <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-network"/></svg></span>
+        <span>NN<span class="brand-light">Visualizer</span><span class="brand-tag">THE NEURAL STUDIO</span></span>
+      </button>
+      <nav class="main-nav" aria-label="Main navigation">
+        <button class="nav-button is-active" data-scroll="workspace-heading" aria-label="Playground"><svg class="icon" aria-hidden="true"><use href="#i-network"/></svg><span>Playground</span></button>
+        <button class="nav-button" data-scroll="article-text" aria-label="Learning guide"><svg class="icon" aria-hidden="true"><use href="#i-book"/></svg><span>Learn</span></button>
+        <button class="nav-button" data-scroll="classroom-panel" aria-label="Classroom settings"><svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg><span>Classroom</span></button>
+      </nav>
+      <button id="share-button" class="button secondary share-button" aria-label="Copy experiment link"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg><span>Share experiment</span></button>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <section class="workspace-intro" aria-labelledby="workspace-heading">
+      <div><p class="eyebrow"><span class="tiny-line"></span> LEARN BY EXPLORING</p><h1 id="workspace-heading">Make learning <span>visible.</span></h1><p class="intro-description">Shape the data. Build the layers. Watch it learn.</p></div>
+      <div class="experiment-state"><span class="status-dot"></span><span id="training-state">Ready to train</span><span class="state-shortcut">LIVE SESSION</span></div>
+    </section>
+
+    <section id="top-controls" class="training-bar" aria-label="Training controls">
+      <div class="transport">
+        <button class="button primary ui-playButton" id="play-pause-button" aria-label="Run training" aria-pressed="false" title="Run or pause training"><svg class="icon play-icon" aria-hidden="true"><use href="#i-play"/></svg><svg class="icon pause-icon" aria-hidden="true"><use href="#i-pause"/></svg><span id="play-label">Run training</span></button>
+        <button class="icon-button ui-stepButton" id="next-step-button" aria-label="Train one epoch" title="Train one epoch"><svg class="icon" aria-hidden="true"><use href="#i-step"/></svg></button>
+        <button class="icon-button ui-resetButton" id="reset-button" aria-label="Reset the network" title="Reset the network"><svg class="icon" aria-hidden="true"><use href="#i-reset"/></svg></button>
+      </div>
+      <div class="epoch-counter"><span class="field-label">EPOCH</span><span id="iter-number" class="mono">000,000</span></div>
+      <div class="training-settings">
+        <div class="control ui-learningRate"><label for="learningRate">Learning rate</label><div class="select"><select id="learningRate"><option value="0.00001">0.00001</option><option value="0.0001">0.0001</option><option value="0.001">0.001</option><option value="0.003">0.003</option><option value="0.01">0.01</option><option value="0.03">0.03</option><option value="0.1">0.1</option><option value="0.3">0.3</option><option value="1">1</option><option value="3">3</option><option value="10">10</option></select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
+        <div class="control ui-activation"><label for="activations">Activation</label><div class="select"><select id="activations"><option value="relu">ReLU</option><option value="tanh">Tanh</option><option value="sigmoid">Sigmoid</option><option value="linear">Linear</option></select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
+        <div class="control ui-regularization"><label for="regularizations">Regularization</label><div class="select"><select id="regularizations"><option value="none">None</option><option value="L1">L1</option><option value="L2">L2</option></select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
+        <div class="control ui-regularizationRate"><label for="regularRate">Regularization rate</label><div class="select"><select id="regularRate"><option value="0">0</option><option value="0.001">0.001</option><option value="0.003">0.003</option><option value="0.01">0.01</option><option value="0.03">0.03</option><option value="0.1">0.1</option><option value="0.3">0.3</option><option value="1">1</option><option value="3">3</option><option value="10">10</option></select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
+      </div>
+    </section>
+    <p id="simulation-status" class="simulation-status" role="status" aria-live="polite" hidden></p>
+
+    <div id="main-part" class="workbench" aria-busy="true">
+      <section class="column data panel" aria-labelledby="data-heading">
+        <div class="panel-heading"><div><p class="eyebrow">01 / DATA</p><h2 id="data-heading">Set the scene</h2></div><span class="panel-number"><svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg></span></div>
+        <div class="data-body">
+          <div class="control ui-problem"><label for="problem">Problem type</label><div class="select"><select id="problem"><option value="classification">Classification</option><option value="regression">Regression</option></select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
+          <div class="ui-dataset"><p class="field-label pattern-label">Choose a pattern</p><div class="dataset-list">
+            <div class="dataset" title="Circle"><canvas class="data-thumbnail" data-dataset="circle"></canvas><span>Circle</span></div>
+            <div class="dataset" title="Exclusive or"><canvas class="data-thumbnail" data-dataset="xor"></canvas><span>XOR</span></div>
+            <div class="dataset" title="Gaussian"><canvas class="data-thumbnail" data-dataset="gauss"></canvas><span>Gaussian</span></div>
+            <div class="dataset" title="Spiral"><canvas class="data-thumbnail" data-dataset="spiral"></canvas><span>Spiral</span></div>
+            <div class="dataset" title="Plane"><canvas class="data-thumbnail" data-regDataset="reg-plane"></canvas><span>Plane</span></div>
+            <div class="dataset" title="Multi gaussian"><canvas class="data-thumbnail" data-regDataset="reg-gauss"></canvas><span>Multi-Gauss</span></div>
+          </div></div>
+          <div class="data-divider"></div>
+          <div class="range-control ui-percTrainData"><label for="percTrainData"><span>Training split</span><span class="range-value"><span class="value">50</span>%</span></label><input type="range" id="percTrainData" min="10" max="90" step="10"><div class="range-caption"><span><i class="legend-dot mint"></i><span id="train-count">250</span> train</span><span><span id="test-count">250</span> test<i class="legend-dot coral"></i></span></div></div>
+          <div class="range-control ui-noise"><label for="noise"><span>Noise</span><span class="range-value"><span class="value">0</span></span></label><input type="range" id="noise" min="0" max="50" step="5"></div>
+          <div class="range-control ui-batchSize"><label for="batchSize"><span>Batch size</span><span class="range-value"><span class="value">13</span></span></label><input type="range" id="batchSize" min="1" max="30" step="1"></div>
+          <button class="button secondary regenerate" id="data-regen-button" title="Regenerate data"><svg class="icon" aria-hidden="true"><use href="#i-shuffle"/></svg>Regenerate data</button>
+          <div class="dataset-meta"><span><span id="sample-count">500</span> samples</span><span class="mono" title="Random seed" id="seed-value">0.68936</span></div>
+        </div>
+      </section>
+
+      <section class="column features panel network-panel" aria-labelledby="network-heading">
+        <div class="panel-heading network-heading"><div><p class="eyebrow">02 / ARCHITECTURE</p><h2 id="network-heading">Build the connections</h2></div><span class="parameter-badge"><span id="parameter-count" class="mono">361</span> parameters</span></div>
+        <div class="network-toolbar"><span class="network-summary"><strong id="num-layers">5</strong> <span id="layers-label">hidden layers</span></span><div class="layer-actions ui-numHiddenLayers"><button id="remove-layers" class="icon-button small" aria-label="Remove a hidden layer" title="Remove a hidden layer"><svg class="icon" aria-hidden="true"><use href="#i-minus"/></svg></button><button id="add-layers" class="button subtle small" aria-label="Add a hidden layer"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>Add layer</button></div></div>
+        <div class="playground-scroll" role="region" aria-label="Neural network playground" tabindex="0">
+          <div id="network"><svg id="svg" aria-label="Neural network connections"></svg><div id="hovercard"><div class="hovercard-hint">Click the connection or bias to edit</div><div class="hovercard-value"><span class="type">Weight</span><span class="value">0.2</span><input aria-label="Weight or bias value" type="number" step="any"></div></div></div>
+        </div>
+        <div class="network-bottom"><span><span class="key-dot"></span><span id="feature-count">7</span> inputs <span class="footer-separator">/</span> 1 output</span><span class="network-legend"><i class="legend-line negative"></i>negative<i class="legend-line positive"></i>positive</span></div>
+        <div class="graph-tip"><svg class="icon" aria-hidden="true"><use href="#i-info"/></svg><span>Click inputs to toggle. Hover to inspect. Click weights to edit.</span><span class="mobile-hint">Swipe to explore →</span></div>
+      </section>
+
+      <section class="column output panel" aria-labelledby="output-heading">
+        <div class="panel-heading"><div><p class="eyebrow">03 / RESULTS</p><h2 id="output-heading">Watch it learn</h2></div><svg class="icon output-signal" aria-hidden="true"><use href="#i-signal"/></svg></div>
+        <div class="results-body">
+          <div class="learning-metrics">
+            <div class="metrics"><div class="output-stats train"><span><i class="legend-dot mint"></i>Training loss</span><strong id="loss-train" class="mono">—</strong></div><div class="output-stats ui-percTrainData"><span><i class="legend-dot coral"></i>Test loss</span><strong id="loss-test" class="mono">—</strong></div></div>
+            <div class="chart-heading"><span>Loss over time</span><span id="chart-epochs" class="mono">0 epochs</span></div><div class="chart-wrapper"><div id="linechart" aria-label="Training and test loss history"></div><span id="chart-empty">Your learning curve starts here.</span></div>
+          </div>
+          <div class="prediction">
+            <div class="prediction-heading"><h3 id="output-title">Decision boundary</h3><span id="inspection-label">Output</span></div>
+            <div id="heatmap"></div>
+            <div class="color-key"><span>−1</span><svg width="150" height="6" viewBox="0 0 150 6" preserveAspectRatio="none" id="colormap" aria-label="Coral indicates negative values; mint indicates positive values"><defs><linearGradient id="gradient"><stop offset="0%" stop-color="#fb9187"/><stop offset="50%" stop-color="#202c37"/><stop offset="100%" stop-color="#6ee7ce"/></linearGradient></defs><g class="core"><rect width="150" height="6" rx="3" fill="url(#gradient)"/></g></svg><span>+1</span></div>
+            <div class="output-options"><label class="toggle ui-showTestData" for="show-test-data"><span>Show test data</span><input type="checkbox" id="show-test-data"></label><label class="toggle ui-discretize" for="discretize"><span>Discretize output</span><input type="checkbox" id="discretize"></label></div>
+          </div>
+        </div>
+      </section>
+    </div>
+    <div class="workspace-footer"><span><span class="tiny-spark">✳</span> A small experiment can spark a big idea.</span><button class="text-button" data-scroll="article-text">Explore the fundamentals <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button></div>
+
+    <article id="article-text" class="learning-section">
+      <div class="section-intro"><p class="eyebrow">A LITTLE INTUITION GOES A LONG WAY</p><h2>Understand every connection.</h2><p>No black box. Just data, a few neurons, and a pattern waiting to be found.</p></div>
+      <div class="guide-grid">
+        <section class="guide-card"><span class="guide-number">01</span><h3>Start with the data.</h3><p>The dots are examples. In classification, their colors are the two categories your network is learning to separate. In regression, the goal is to predict a continuous value.</p><p>Training examples teach the network. Test examples show how it performs on data it has not trained on.</p></section>
+        <section class="guide-card"><span class="guide-number">02</span><h3>Follow the signal.</h3><p>Each neuron combines its inputs using weights and a bias, then applies an activation function. Each layer transforms the signal a little further.</p><p>Training adjusts the weights to reduce prediction error. Hover over any neuron to see the pattern it has learned.</p></section>
+        <section class="guide-card"><span class="guide-number">03</span><h3>Read between the lines.</h3><p><span class="text-mint">Mint means positive.</span> <span class="text-coral">Coral means negative.</span> Thicker connections have larger weights. A neuron’s small dot represents its bias.</p><p>The output background shows predictions across the space. Color intensity shows the output’s magnitude, not calibrated probability.</p></section>
+      </div>
+      <details id="classroom-panel" class="classroom-panel" open>
+        <summary><div><p class="eyebrow">YOUR LESSON, YOUR PLAYGROUND</p><h3>Make room for the concepts that matter.</h3></div><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+        <div class="classroom-body"><p>Choose which controls your students see. Apply the view, or open the link to share your starting configuration.</p><div class="hide-controls"></div><div class="classroom-actions"><button id="refresh-controls" class="button secondary" type="button">Apply view<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button><a class="hide-controls-link text-button" href="#" target="_blank" rel="noopener noreferrer">Open this view<svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a><span>Visibility changes take effect on reload.</span></div></div>
+      </details>
+      <div class="further-reading"><div><h3>Keep following your curiosity.</h3><p>Go deeper with <a href="https://neuralnetworksanddeeplearning.com/">Neural Networks and Deep Learning</a> by Michael Nielsen, or <a href="https://www.deeplearningbook.org/">Deep Learning</a> by Ian Goodfellow, Yoshua Bengio, and Aaron Courville.</p></div><svg class="icon" aria-hidden="true"><use href="#i-book"/></svg></div>
+      <details class="credits"><summary>Open-source foundations &amp; credits<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary><p>NNVisualizer is an independent studio interface built on the educational neural-network engine from <a href="https://github.com/tensorflow/playground">TensorFlow Playground</a>, created by Daniel Smilkov and Shan Carter. Original work copyright 2016 Google Inc., used under the <a href="/LICENSE.txt">Apache 2.0 license</a>. It is not an official Google or TensorFlow product.</p><p>The original project builds on Andrej Karpathy’s <a href="https://cs.stanford.edu/people/karpathy/convnetjs/demo/classify2d.html">convnet.js demo</a> and Chris Olah’s <a href="https://colah.github.io/posts/2014-03-NN-Manifolds-Topology/">neural-network explanations</a>, with contributions and guidance from D. Sculley, Fernanda Viégas, Martin Wattenberg, the Big Picture team and Google Brain. This small engine is for exploration; <a href="https://www.tensorflow.org/">TensorFlow</a> supports larger applications.</p></details>
+    </article>
+  </main>
+  <footer class="app-footer"><span class="footer-brand">NNVisualizer<span>Built for the moment it clicks.</span></span><div><a href="https://github.com/tensorflow/playground" target="_blank" rel="noopener noreferrer">Engine source<svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a><a href="/THIRD_PARTY_NOTICES.txt">Open-source licenses</a></div></footer>
+  <div id="share-feedback" class="toast" role="status" aria-live="polite" hidden></div>
+  <dialog id="share-dialog" aria-labelledby="share-heading"><div class="dialog-header"><h2 id="share-heading">Share this experiment</h2><button id="close-share" class="icon-button" aria-label="Close sharing dialog"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div><p>Copy this address to share the starting configuration and random seed.</p><label for="share-url" class="field-label">Experiment link</label><input id="share-url" type="text" readonly><p class="dialog-note">The link does not include trained weights or the current epoch.</p></dialog>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
