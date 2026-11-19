@@ -1,4 +1,4 @@
-# NNVisualizer Implementation Plan
+# Neural Network Visualizer Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Work in the requested NNVisualizer folder; no external worktree or publication.
+- Work in the requested Neural Network Visualizer folder; no external worktree or publication.
 - Reference commit: 02469bd3751764b20486015d4202b792af5362a6; retain Apache-2.0 notices.
 - Preserve all visible reference features and the supplied initial experiment.
 - Node >=22.12; recommend Node 24 for Vercel; production output `dist/`.

@@ -14,7 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 import * as d3 from 'd3';
-// NNVisualizer: responsive SVG view box, monotone curves, and per-series CSS
+// Neural Network Visualizer: responsive SVG view box, monotone curves, and per-series CSS
 // classes so each theme styles the lines without repainting.
 
 type DataPoint = {

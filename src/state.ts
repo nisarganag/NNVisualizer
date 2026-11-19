@@ -17,7 +17,7 @@ import * as nn from "./nn";
 import * as dataset from "./dataset";
 import seedrandom from 'seedrandom';
 
-// Modified for NNVisualizer: validated, encoded URL state; supplied initial
+// Modified for Neural Network Visualizer: validated, encoded URL state; supplied initial
 // experiment; pure parsing for tests; replaceState avoids slider-history spam.
 
 /** Suffix added to the state when storing if a control is hidden or not. */
@@ -146,33 +146,34 @@ export class State {
   ];
 
   [key: string]: any;
-  learningRate = 0.001;
-  regularizationRate = 0.01;
+  // Default experiment: a small, fast-learning network on the circle dataset.
+  learningRate = 0.03;
+  regularizationRate = 0;
   showTestData = false;
   noise = 0;
-  batchSize = 13;
+  batchSize = 10;
   discretize = false;
   tutorial: string = null;
   percTrainData = 50;
   activation = nn.Activations.TANH;
-  regularization: nn.RegularizationFunction = nn.RegularizationFunction.L1;
+  regularization: nn.RegularizationFunction = null;
   problem = Problem.CLASSIFICATION;
   initZero = false;
   hideText = false;
   collectStats = false;
-  numHiddenLayers = 5;
+  numHiddenLayers = 2;
   hiddenLayerControls: any[] = [];
-  networkShape: number[] = [8, 8, 8, 8, 8];
+  networkShape: number[] = [4, 2];
   x = true;
   y = true;
-  xTimesY = true;
-  xSquared = true;
-  ySquared = true;
+  xTimesY = false;
+  xSquared = false;
+  ySquared = false;
   cosX = false;
-  sinX = true;
+  sinX = false;
   cosY = false;
-  sinY = true;
-  dataset: dataset.DataGenerator = dataset.classifyTwoGaussData;
+  sinY = false;
+  dataset: dataset.DataGenerator = dataset.classifyCircleData;
   regDataset: dataset.DataGenerator = dataset.regressPlane;
   seed = '0.68936';
 
@@ -184,6 +185,7 @@ export class State {
       new URLSearchParams(hash.replace(/^#/, '')),
     );
     let state = new State();
+    const defaults = new State();
 
     function hasKey(name: string): boolean {
       return name in map && map[name] != null && map[name].trim() !== "";
@@ -247,10 +249,10 @@ export class State {
     state.percTrainData = Math.max(10, Math.min(90, Math.round(state.percTrainData)));
     state.noise = Math.max(0, Math.min(80, state.noise));
     if (![.00001, .0001, .001, .003, .01, .03, .1, .3, 1, 3, 10].includes(state.learningRate)) {
-      state.learningRate = .001;
+      state.learningRate = defaults.learningRate;
     }
     if (![0, .001, .003, .01, .03, .1, .3, 1, 3, 10].includes(state.regularizationRate)) {
-      state.regularizationRate = .01;
+      state.regularizationRate = defaults.regularizationRate;
     }
     if (state.tutorial && !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(state.tutorial)) {
       state.tutorial = null;

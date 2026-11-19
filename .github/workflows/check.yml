@@ -1,4 +1,4 @@
-name: Check NNVisualizer
+name: Check Neural Network Visualizer
 on:
   push:
   pull_request:

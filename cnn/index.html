@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f3f4f9">
+  <meta name="description" content="Draw a digit and watch a convolutional neural network trained on MNIST read it, with every filter and feature map visible.">
+  <meta property="og:title" content="Digits — Neural Network Visualizer">
+  <meta property="og:description" content="Draw a digit. Watch a CNN read it.">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <title>Digits — Neural Network Visualizer</title>
+  <script>
+    // Apply the saved or system theme before the first paint to avoid a flash.
+    (function () {
+      var theme;
+      try { theme = localStorage.getItem('nnvisualizer-theme'); } catch (error) { theme = null; }
+      if (theme !== 'light' && theme !== 'dark') {
+        theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      document.documentElement.dataset.theme = theme;
+      document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#0f121e' : '#f3f4f9';
+    })();
+  </script>
+</head>
+<body class="page-cnn">
+  <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs>
+      <symbol id="i-network" viewBox="0 0 24 24"><path d="m6 7 6 5 6-5M6 17l6-5 6 5"/><circle cx="4" cy="5" r="2"/><circle cx="4" cy="19" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="20" cy="19" r="2"/></symbol>
+      <symbol id="i-digits" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M9.2 9.6c.5-1.9 5.4-2.1 5.4.6 0 2.3-4.2 3.6-5.6 5.9h5.9"/></symbol>
+      <symbol id="i-attention" viewBox="0 0 24 24"><circle cx="4.5" cy="17.5" r="2"/><circle cx="12" cy="17.5" r="2"/><circle cx="19.5" cy="17.5" r="2"/><path d="M4.5 15.2c.6-7.4 14.4-7.4 15 0M12 15.2c.4-4 7.1-4 7.5 0"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-eraser" viewBox="0 0 24 24"><path d="m14.5 4.5 5 5-9 9H6l-2.5-2.5a1.4 1.4 0 0 1 0-2z"/><path d="M10 18.5h10M9 9l6 6"/></symbol>
+      <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M3 6h3c5 0 7 12 12 12h3m-4-4 4 4-4 4M3 18h3c2 0 3-2 5-5m3-5c1-1 2-2 4-2h3m-4-4 4 4-4 4"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M8 16 18 6M8 6h10v10"/></symbol>
+    </defs>
+  </svg>
+  <noscript><p class="noscript">Enable JavaScript to draw and classify digits.</p></noscript>
+
+  <header class="app-header">
+    <div class="header-inner">
+      <a class="brand" href="/" aria-label="Neural Network Visualizer home">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <defs><clipPath id="brand-clip"><circle cx="16" cy="16" r="14"/></clipPath></defs>
+          <g clip-path="url(#brand-clip)">
+            <rect class="mark-negative" width="32" height="32"/>
+            <path class="mark-positive" d="M0 0h32v8.5c-8.2 1-10.6 10.9-19.6 13.6C8 23.4 3.6 23.3 0 22.4z"/>
+            <circle class="mark-point" cx="22.5" cy="8.5" r="2.1"/>
+          </g>
+        </svg>
+        <span class="brand-name">Neural Network Visualizer</span>
+      </a>
+      <nav class="main-nav" aria-label="Models">
+        <span class="nav-indicator" aria-hidden="true"></span>
+        <a class="nav-button" href="/" aria-label="Playground" data-model="playground"><svg class="icon" aria-hidden="true"><use href="#i-network"/></svg><span>Playground</span></a>
+        <a class="nav-button is-active" href="/cnn/" aria-current="page" aria-label="Digits" data-model="cnn"><svg class="icon" aria-hidden="true"><use href="#i-digits"/></svg><span>Digits</span></a>
+        <a class="nav-button" href="/transformer/" aria-label="Transformer" data-model="transformer"><svg class="icon" aria-hidden="true"><use href="#i-attention"/></svg><span>Transformer</span></a>
+      </nav>
+      <div class="header-actions">
+        <button id="theme-toggle" class="icon-button theme-toggle" type="button" aria-label="Dark theme" aria-pressed="false" title="Switch to dark theme">
+          <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <mask id="theme-moon-mask"><rect width="24" height="24" fill="#fff"/><circle class="moon-bite" cx="17.5" cy="6.5" r="6" fill="#000"/></mask>
+            <circle class="sun-core" cx="12" cy="12" r="5" mask="url(#theme-moon-mask)"/>
+            <g class="sun-rays"><path d="M12 2.6v1.9M12 19.5v1.9M21.4 12h-1.9M4.5 12H2.6M18.65 5.35l-1.35 1.35M6.7 17.3l-1.35 1.35M18.65 18.65 17.3 17.3M6.7 6.7 5.35 5.35"/></g>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <section class="workspace-intro" aria-labelledby="cnn-heading">
+      <div class="intro-copy">
+        <h1 id="cnn-heading">Draw a digit. Watch a CNN read it.</h1>
+        <p class="intro-description">A small convolutional network, trained on 60,000 handwritten digits, reads your drawing as you draw. Every filter and feature map is on screen.</p>
+      </div>
+    </section>
+
+    <div id="cnn-workbench" class="cnn-workbench" aria-busy="true">
+      <section class="panel" aria-labelledby="pad-heading">
+        <div class="panel-heading"><h2 id="pad-heading">Scratchpad</h2></div>
+        <div class="stage-body">
+          <div class="pad-frame">
+            <canvas id="draw-pad" class="draw-pad" aria-label="Drawing area. Draw a digit from 0 to 9 with a mouse, finger or pen." role="img"></canvas>
+            <p id="pad-hint" class="pad-hint">Draw a digit here</p>
+          </div>
+          <div class="pad-actions">
+            <button id="clear-pad" class="button secondary" type="button"><svg class="icon" aria-hidden="true"><use href="#i-eraser"/></svg>Clear</button>
+            <button id="example-digit" class="button subtle" type="button"><svg class="icon" aria-hidden="true"><use href="#i-shuffle"/></svg>Try an example</button>
+          </div>
+          <p class="callout-note">Draw any digit from <strong>0 to 9</strong>. The network reads it as you draw.</p>
+          <figure class="input-figure"><figcaption>What the network sees <span>28 × 28 pixels, centered like the training data</span></figcaption><canvas id="input-view" class="pixel-view"></canvas></figure>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="layers-heading">
+        <div class="panel-heading"><h2 id="layers-heading">Layers</h2><span class="stage-meta"><span id="parameter-total" class="readout">52,138</span> parameters</span></div>
+        <div class="stage-body">
+          <div class="layer-row" data-layer="conv1"><div class="layer-copy"><h3>Convolution 1</h3><p>8 filters, 3×3, then ReLU</p></div><div class="map-grid maps-8" id="conv1-maps"></div></div>
+          <div class="layer-row" data-layer="pool1"><div class="layer-copy"><h3>Max pooling</h3><p>Keeps the strongest of each 2×2</p></div><div class="map-grid maps-8 small" id="pool1-maps"></div></div>
+          <div class="layer-row" data-layer="conv2"><div class="layer-copy"><h3>Convolution 2</h3><p>16 filters, each reading all 8 maps</p></div><div class="map-grid maps-16" id="conv2-maps"></div></div>
+          <div class="layer-row" data-layer="pool2"><div class="layer-copy"><h3>Max pooling</h3><p>16 maps of 7×7</p></div><div class="map-grid maps-16 small" id="pool2-maps"></div></div>
+          <div class="layer-row" data-layer="dense"><div class="layer-copy"><h3>Dense</h3><p>64 neurons look at all 784 values</p></div><canvas id="dense-view" class="dense-view"></canvas></div>
+          <p class="callout-note">Each square is a <strong>feature map</strong>: where one filter found its pattern. Hover or focus one to see its filter.</p>
+          <div id="map-inspector" class="map-inspector" aria-live="polite">
+            <canvas id="inspector-map" class="pixel-view"></canvas>
+            <div class="inspector-copy">
+              <h3 id="inspector-title">Choose a feature map</h3>
+              <p id="inspector-text">Its filter weights appear here. Violet weights add to the response; amber weights subtract from it.</p>
+              <div id="inspector-kernels" class="kernel-grid"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="prediction-heading">
+        <div class="panel-heading"><h2 id="prediction-heading">Prediction</h2></div>
+        <div class="stage-body">
+          <div class="verdict" aria-live="polite"><span id="predicted-digit" class="verdict-digit readout">?</span><span id="predicted-confidence" class="verdict-confidence">Draw to begin</span></div>
+          <ol id="digit-bars" class="digit-bars" aria-label="Probability for each digit"></ol>
+          <p class="callout-note">The tallest bar is the network’s <strong>answer</strong>. Close calls show where it’s unsure.</p>
+        </div>
+      </section>
+    </div>
+
+    <article class="learning-section" aria-labelledby="cnn-guide-heading">
+      <div class="section-intro"><h2 id="cnn-guide-heading">How a CNN reads a digit.</h2><p>Small filters slide across the image, pooling keeps what matters, and a final layer weighs the evidence for each digit.</p></div>
+      <div class="guide-grid">
+        <section class="guide-card"><h3>Filters find strokes</h3><p>Each 3×3 filter slides over the image and responds where its pattern appears: an edge, a corner, a curve. The result is a feature map.</p></section>
+        <section class="guide-card"><h3>Pooling shrinks the map</h3><p>Max pooling keeps the strongest response in each 2×2 patch, so the network cares less about exactly where a stroke is.</p></section>
+        <section class="guide-card"><h3>Dense layers decide</h3><p>The second convolution combines strokes into shapes. Dense layers then score each digit, and softmax turns the scores into probabilities.</p></section>
+      </div>
+      <details class="credits"><summary>Model and credits<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+        <p>The network was trained for this site on the <a href="https://yann.lecun.com/exdb/mnist/">MNIST database</a> of handwritten digits by Yann LeCun, Corinna Cortes and Christopher J. C. Burges (CC BY-SA 3.0), with rotations, shifts and stroke-width changes so hand-drawn digits work. It runs entirely in your browser; nothing you draw leaves your device. The example digits come from the MNIST test set.</p>
+      </details>
+    </article>
+  </main>
+  <footer class="app-footer"><span class="footer-brand">Neural Network Visualizer<span>Built for the moment it clicks.</span></span><div><a href="/THIRD_PARTY_NOTICES.txt">Open-source licenses</a></div></footer>
+  <script type="module" src="/src/cnn/main.ts"></script>
+</body>
+</html>

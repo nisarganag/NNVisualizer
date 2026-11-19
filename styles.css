@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-/* NNVisualizer studio: original layout, light/dark themes, typography, motion,
+/* Neural Network Visualizer studio: original layout, light/dark themes, typography, motion,
    and responsive graph. Interface chrome stays neutral ink so that color only
    ever carries signal: violet for positive values, amber for negative ones. */
 
@@ -138,12 +138,12 @@ h1, h2, h3 { text-wrap: balance; }
 .text-button { gap: 6px; color: var(--ink-2); font-size: 13.5px; font-weight: 500; padding: 0; transition: color .2s; }
 .text-button:hover { color: var(--ink); }
 .text-button .icon { width: 16px; height: 16px; transition: transform .3s var(--ease-out); }
-.text-button:hover .icon { transform: translateY(2px); }
+.workspace-footer .text-button:hover .icon { transform: translateY(2px); }
 
 /* ---------- Header ---------- */
 .app-header { position: sticky; top: 0; z-index: 50; height: 64px; background: var(--header-glass); border-bottom: 1px solid var(--line); backdrop-filter: blur(16px) saturate(1.5); -webkit-backdrop-filter: blur(16px) saturate(1.5); }
 .header-inner { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 24px; max-width: 1720px; height: 100%; margin: auto; padding: 0 32px; }
-.brand { display: inline-flex; align-items: center; gap: 10px; justify-self: start; border: 0; background: none; padding: 4px 6px 4px 0; border-radius: 999px; color: var(--ink); }
+.brand { display: inline-flex; align-items: center; gap: 10px; justify-self: start; border: 0; background: none; padding: 4px 6px 4px 0; border-radius: 999px; color: var(--ink); text-decoration: none; }
 .brand-mark { width: 28px; height: 28px; flex-shrink: 0; transition: transform .6s var(--ease-spring); }
 .brand:hover .brand-mark { transform: rotate(-24deg); }
 .mark-negative { fill: var(--signal-negative); }
@@ -172,7 +172,8 @@ h1, h2, h3 { text-wrap: balance; }
 
 /* ---------- Intro ---------- */
 .app-shell { width: min(1656px, calc(100% - 64px)); margin: 0 auto; }
-.workspace-intro { padding: 34px 0 24px; }
+.workspace-intro { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 14px 32px; padding: 34px 0 24px; }
+.page-links { display: flex; align-items: center; gap: 22px; padding-bottom: 3px; }
 h1 { font-size: clamp(30px, 3.1vw, 46px); font-weight: 720; font-stretch: 116%; line-height: 1.08; letter-spacing: -.035em; }
 .intro-description { margin-top: 10px; color: var(--ink-2); font-size: 16px; max-width: 60ch; }
 
@@ -296,6 +297,12 @@ input[type='range']:focus-visible { outline-offset: 4px; border-radius: 6px; }
 #network .link.related, #network .link.inspected { stroke-opacity: 1; }
 #network:has(.link.inspected) .link:not(.inspected) { stroke-opacity: .16; }
 #network .link-hover { stroke: transparent; stroke-width: 10; fill: none; pointer-events: stroke; cursor: pointer; }
+/* Margin notes that point out what can be explored. */
+.graph-callout { position: absolute; z-index: 2; width: 178px; padding: 3px 6px; border-radius: 8px; background: color-mix(in oklab, var(--stage) 84%, transparent); color: var(--ink-3); font-family: var(--font-math); font-size: 14px; font-style: italic; line-height: 1.38; pointer-events: none; }
+.graph-callout strong { color: var(--ink-2); font-weight: 650; }
+#network .callout-arrows { pointer-events: none; }
+#network .callout-arrow path { fill: none; stroke: var(--ink-3); stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.graph-callout.is-entering, #network .callout-arrow.is-entering { animation: callout-in .7s var(--ease-out) var(--callout-delay, 0s) both; }
 .layer-label { position: absolute; top: 22px; z-index: 4; transform: translateX(-50%); color: var(--ink-3); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
 .plus-minus-neurons { position: absolute; top: 14px; z-index: 4; width: 84px; transform: translateX(-50%); text-align: center; }
 .layer-name { color: var(--ink); font-size: 12.5px; font-weight: 650; }
@@ -360,6 +367,14 @@ input[type='range']:focus-visible { outline-offset: 4px; border-radius: 6px; }
 .color-key { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 10px auto 16px; color: var(--ink-3); font-size: 12px; }
 .color-key-bar { width: 132px; height: 8px; border-radius: 99px; background: linear-gradient(90deg, var(--signal-negative), var(--signal-neutral), var(--signal-positive)); background: linear-gradient(in oklab 90deg, var(--signal-negative), var(--signal-neutral), var(--signal-positive)); box-shadow: inset 0 0 0 1px var(--line); }
 .output-options { display: flex; flex-direction: column; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+
+/* ---------- Shared model-page pieces ---------- */
+.stage-body { padding: 8px 20px 20px; transition: opacity .4s; }
+.stage-meta { color: var(--ink-3); font-size: 12.5px; text-align: right; }
+/* Margin notes that point to the feature above them. */
+.callout-note { position: relative; margin: 12px 0; padding-left: 28px; color: var(--ink-3); font-family: var(--font-math); font-size: 14px; font-style: italic; line-height: 1.38; }
+.callout-note strong { color: var(--ink-2); font-weight: 650; }
+.callout-note::before { content: ''; position: absolute; top: -8px; left: 4px; width: 18px; height: 22px; background: var(--ink-3); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 22' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 19C8 19 5 14 5 3M2 6.5 5 2.5l3 4'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 22' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 19C8 19 5 14 5 3M2 6.5 5 2.5l3 4'/%3E%3C/svg%3E") center / contain no-repeat; }
 
 /* ---------- Learning section ---------- */
 .workspace-footer { display: flex; justify-content: center; padding: 26px 0 8px; }
@@ -442,9 +457,16 @@ dialog .dialog-note { margin-bottom: 0; color: var(--ink-3); font-size: 13px; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(14px) scale(.97); } }
 @keyframes dialog-in { from { opacity: 0; transform: translateY(10px) scale(.97); } }
 @keyframes fade-in { from { opacity: 0; } }
+@keyframes callout-in { from { opacity: 0; transform: translateY(4px); } }
 
-/* The theme switch is revealed from the toggle by script; disable the default crossfade. */
-::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+/* Moving between models crossfades the page while the header stays put. */
+@media (prefers-reduced-motion: no-preference) {
+  @view-transition { navigation: auto; }
+}
+.app-header { view-transition-name: site-header; }
+/* The theme switch is revealed from the toggle by script, so it skips the default crossfade. */
+:root.theme-switching .app-header { view-transition-name: none; }
+:root.theme-switching::view-transition-old(root), :root.theme-switching::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
 /* Fallback for browsers without view transitions: a short color crossfade. */
 :root.theme-fading *, :root.theme-fading *::before, :root.theme-fading *::after { transition: background-color .35s ease, border-color .35s ease, color .35s ease, fill .35s ease, stroke .35s ease, box-shadow .35s ease !important; }
 
@@ -452,6 +474,11 @@ dialog .dialog-note { margin-bottom: 0; color: var(--ink-3); font-size: 13px; }
 @media (min-width: 1600px) {
   .workbench { grid-template-columns: 256px minmax(0, 1fr) 320px; }
   #heatmap { max-width: 272px; }
+}
+@media (max-width: 1100px) {
+  .brand-name { font-size: 15.5px; font-stretch: 108%; }
+  .share-button { width: 36px; padding: 0; }
+  .share-button > span { display: none; }
 }
 @media (max-width: 1280px) {
   .app-shell, .app-footer { width: calc(100% - 40px); }
@@ -553,8 +580,8 @@ dialog .dialog-note { margin-bottom: 0; color: var(--ink-3); font-size: 13px; }
   .epoch-counter { padding-left: 10px; }
   #iter-number { font-size: 17px; }
 }
-@media (max-width: 359px) {
-  /* The mark alone identifies the studio; the button keeps its accessible name. */
+@media (max-width: 520px) {
+  /* The mark alone identifies the site; the link keeps its accessible name. */
   .brand-name { display: none; }
   .hide-controls { grid-template-columns: 1fr; }
   .output-options { flex-direction: column; gap: 14px; }

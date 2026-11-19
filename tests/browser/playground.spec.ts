@@ -8,6 +8,9 @@ test.beforeEach(({ page }) => {
 });
 test.afterEach(({ page }) => expect(pageErrors.get(page)).toEqual([]));
 
+// The configuration whose first epochs were captured from the original playground.
+const REFERENCE = '/#activation=tanh&regularization=L1&batchSize=13&dataset=gauss&learningRate=0.001&regularizationRate=0.01&noise=0&networkShape=8,8,8,8,8&seed=0.68936&percTrainData=50&x=true&y=true&xSquared=true&ySquared=true&xTimesY=true&sinX=true&sinY=true&problem=classification';
+
 async function ready(page: Page) {
   await expect(page.locator('#main-part')).toHaveAttribute('aria-busy', 'false');
   await page.evaluate(() => document.fonts.ready);
@@ -29,6 +32,24 @@ async function setRange(page: Page, id: string, value: string) {
   await ready(page);
 }
 
+test('opens with a small default network: circle data, two inputs, layers of 4 and 2', async ({ page }) => {
+  await page.goto('/');
+  await ready(page);
+  await expect(page.locator('#num-layers')).toHaveText('2');
+  await expect(page.locator('#parameter-count')).toHaveText('25');
+  await expect(page.locator('canvas[data-dataset="circle"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#learningRate')).toHaveValue('0.03');
+  await expect(page.locator('#activations')).toHaveValue('tanh');
+  await expect(page.locator('#regularizations')).toHaveValue('none');
+  await expect(page.locator('#regularRate')).toHaveValue('0');
+  await expect(page.locator('#batchSize')).toHaveValue('10');
+  for (const feature of ['x', 'y']) await expect(page.locator('#canvas-' + feature)).toHaveAttribute('aria-pressed', 'true');
+  for (const feature of ['xSquared', 'ySquared', 'xTimesY', 'sinX', 'sinY'])
+    await expect(page.locator('#canvas-' + feature)).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('#network path.link')).toHaveCount(2 * 4 + 4 * 2 + 2);
+  await step(page);
+});
+
 test('loads the supplied experiment using local assets and matches the original first epoch', async ({ page }) => {
   const external: string[] = [];
   const failed: string[] = [];
@@ -38,9 +59,9 @@ test('loads the supplied experiment using local assets and matches the original 
   });
   page.on('response', response => { if (response.status() >= 400) failed.push(response.url()); });
   page.on('worker', worker => workers.push(worker.url()));
-  await page.goto('/');
+  await page.goto(REFERENCE);
   await ready(page);
-  await expect(page).toHaveTitle('NNVisualizer — Neural Network Playground');
+  await expect(page).toHaveTitle('Playground — Neural Network Visualizer');
   await expect(page.locator('#num-layers')).toHaveText('5');
   await expect(page.locator('#network div.canvas')).toHaveCount(48);
   await expect(page.locator('#heatmap g.train circle')).toHaveCount(250);
@@ -126,7 +147,7 @@ test('activation and regularization choices work, and sliders change the experim
 });
 
 test('network editing respects maximum and minimum layer and neuron counts', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(REFERENCE);
   await ready(page);
   await page.locator('#add-layers').click();
   await ready(page);
@@ -145,7 +166,7 @@ test('network editing respects maximum and minimum layer and neuron counts', asy
 });
 
 test('zero inputs and zero hidden layers remain trainable and survive sharing', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(REFERENCE);
   await ready(page);
   for (const feature of ['x','y','xSquared','ySquared','xTimesY','sinX','sinY']) {
     await page.locator('#canvas-' + feature).click();
@@ -167,7 +188,7 @@ test('zero inputs and zero hidden layers remain trainable and survive sharing', 
 });
 
 test('neuron inspection, test-point visibility and discrete heatmaps work', async ({ page }) => {
-  await page.goto('/');
+  await page.goto(REFERENCE);
   await ready(page);
   const canvas = page.locator('#heatmap canvas');
   const initial = await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL());
@@ -276,7 +297,7 @@ test('narrow screens scroll the complete network without overflowing the page', 
 });
 
 test('resizing preserves accessible network controls and classroom visibility', async ({ page }) => {
-  await page.goto('/#numNodes1_hide=true');
+  await page.goto(REFERENCE + '&numNodes1_hide=true');
   await ready(page);
   await expect(page.locator('.ui-numNodes1')).toBeHidden();
   await page.setViewportSize({ width: 390, height: 844 });
@@ -367,7 +388,7 @@ test.describe('themes', () => {
     expect(await page.locator('meta[name="theme-color"]').getAttribute('content')).toBe('#f3f4f9');
     expect(page.url()).toBe(experiment);
     expect(await epoch(page)).toBe(1);
-    await expect(page.locator('#network div.canvas')).toHaveCount(48);
+    await expect(page.locator('#network div.canvas')).toHaveCount(7 + 4 + 2 + 1);
     await page.reload();
     await ready(page);
     await expect(root).toHaveAttribute('data-theme', 'light');

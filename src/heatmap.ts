@@ -17,7 +17,7 @@ import {Example2D} from "./dataset";
 import * as d3 from 'd3';
 import type { Matrix } from './worker-protocol';
 import { signalRange } from './palette';
-// NNVisualizer: transferable grids, themed palette with perceptual (Lab)
+// Neural Network Visualizer: transferable grids, themed palette with perceptual (Lab)
 // interpolation, precomputed shade lookup, and responsive view geometry.
 
 export interface HeatMapSettings {

@@ -26,10 +26,22 @@ describe('shareable experiment state', () => {
     expect(state.batchSize).toBe(1);
     expect(state.percTrainData).toBe(90);
     expect(state.noise).toBe(0);
-    expect(state.learningRate).toBe(.001);
-    expect(state.regularizationRate).toBe(.01);
+    // Invalid values fall back to the default experiment.
+    expect(state.learningRate).toBe(.03);
+    expect(state.regularizationRate).toBe(0);
     expect(state.activation).toBe(activations.tanh);
-    expect(state.dataset).toBe(datasets.gauss);
+    expect(state.dataset).toBe(datasets.circle);
+  });
+
+  it('starts with a small circle experiment: two inputs, a 4-2 network, Tanh, no regularization', () => {
+    const state = State.deserializeState('');
+    expect(state).toMatchObject({ networkShape: [4, 2], numHiddenLayers: 2, learningRate: .03, regularizationRate: 0,
+      batchSize: 10, percTrainData: 50, noise: 0, x: true, y: true,
+      xSquared: false, ySquared: false, xTimesY: false, sinX: false, sinY: false });
+    expect(state.dataset).toBe(datasets.circle);
+    expect(state.activation).toBe(activations.tanh);
+    expect(state.regularization).toBe(regularizations.none);
+    expect(state.problem).toBe(Problem.CLASSIFICATION);
   });
 
   it('retains all-off features and ignores malformed lessons and unknown hiding selectors', () => {

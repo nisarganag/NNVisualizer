@@ -35,7 +35,7 @@ import type { Matrix, NetworkConfig, WorkerCommand, WorkerResponse } from './wor
 import { signalRange, THEME_CHANGE_EVENT } from './palette';
 import { icon } from './studio';
 
-// NNVisualizer modifications: worker-driven training; original studio layout,
+// Neural Network Visualizer modifications: worker-driven training; original studio layout,
 // centered circular graph, themed colors, typeset feature labels, graph motion,
 // accessible controls and safe editing.
 
@@ -745,7 +745,8 @@ function drawNetwork(network: nn.Node[][]): void {
   // Connections sit beneath their hit targets and the nodes.
   const linkLayer = container.append('g').attr('class', 'links');
   const coordinates: Record<string, { cx: number; cy: number }> = {};
-  const inputX = 72;
+  // Leaves room for the widest typeset label, sin(x₂), plus a margin.
+  const inputX = 100;
   const outputX = width - 44;
   const layerX = (index: number) => inputX + (outputX - inputX) * index / (network.length - 1);
   const nodeY = (count: number, index: number) => top + ((rows - count) / 2 + index) * rowGap + RECT_SIZE / 2;
@@ -792,7 +793,101 @@ function drawNetwork(network: nn.Node[][]): void {
   // start at their final width instead of transitioning from the default.
   updateWeightsUI(network, container);
   updateBiasesUI(network);
+  drawCallouts(network, container, coordinates, width, height, inputX, motion);
   if (motion) animateNetwork(motion, root, before);
+}
+
+interface Box { x: number; y: number; w: number; h: number; }
+const overlaps = (a: Box, b: Box) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+/** Where a note sits relative to what it points at; the arrow leaves from that side. */
+interface CalloutSpot { box: Box; to: [number, number]; side: 'above' | 'below' | 'right'; bend: number; }
+
+/**
+ * Margin notes that point out what can be explored, placed in free space next to
+ * the graph. Each note tries a few spots and is left out when none is clear of the
+ * neurons and layer controls, so large networks stay uncluttered.
+ */
+function drawCallouts(network: nn.Node[][], container, coordinates: Record<string, { cx: number; cy: number }>,
+    width: number, height: number, inputX: number, motion: 'enter' | 'rewire' | null): void {
+  const root = d3.select('#network');
+  root.selectAll('div.graph-callout').remove();
+  const arrows = container.append('g').attr('class', 'callout-arrows');
+  // Layer names and neuron steppers occupy the top band; neurons get a margin.
+  const obstacles: Box[] = [{ x: 0, y: 0, w: width, h: 88 }];
+  Object.values(coordinates).forEach(({ cx, cy }) => obstacles.push({ x: cx - 30, y: cy - 30, w: 60, h: 60 }));
+  const delay = motion === 'enter' ? 1.1 : .35;
+
+  const place = (html: string, spots: ((w: number, h: number) => CalloutSpot | null)[]) => {
+    const note = root.append('div').attr('class', 'graph-callout').html(html);
+    const element = note.node() as HTMLElement;
+    const w = element.offsetWidth;
+    const h = element.offsetHeight;
+    for (const spotFor of spots) {
+      const spot = spotFor(w, h);
+      if (!spot) continue;
+      // Slide sideways to stay inside the stage; the arrow still finds its target.
+      const box = { ...spot.box, x: Math.max(8, Math.min(spot.box.x, width - w - 8)) };
+      if (box.y < 6 || box.y + h > height - 6) continue;
+      if (obstacles.some(obstacle => overlaps(obstacle, box))) continue;
+      obstacles.push(box);
+      // Coordinates are in graph space, which the SVG offsets by 3px.
+      note.style({ left: `${box.x + 3}px`, top: `${box.y + 3}px` });
+      const [x2, y2] = spot.to;
+      const edgeX = Math.max(box.x + 14, Math.min(x2 - 12, box.x + w - 14));
+      const [x1, y1] = spot.side === 'right' ? [box.x - 6, Math.min(y2 - 4, box.y + 14)]
+        : spot.side === 'below' ? [edgeX, box.y - 6] : [edgeX, box.y + h + 6];
+      const mx = (x1 + x2) / 2 + spot.bend;
+      const my = (y1 + y2) / 2;
+      const angle = Math.atan2(y2 - my, x2 - mx);
+      const head = (turn: number) => `${x2 - 7 * Math.cos(angle + turn)},${y2 - 7 * Math.sin(angle + turn)}`;
+      const arrow = arrows.append('g').attr('class', 'callout-arrow');
+      arrow.append('path').attr('d', `M${x1},${y1}Q${mx},${my} ${x2},${y2}`);
+      arrow.append('path').attr('d', `M${head(.5)}L${x2},${y2}L${head(-.5)}`);
+      if (motion) {
+        note.classed('is-entering', true).style('--callout-delay', `${delay}s`);
+        arrow.classed('is-entering', true).style('--callout-delay', `${delay}s`);
+      }
+      return;
+    }
+    note.remove();
+  };
+
+  // A neuron in the last hidden layer (or the output when there are none).
+  const neuronLayer = network.length > 2 ? network.length - 2 : network.length - 1;
+  const neurons = network[neuronLayer].map(node => coordinates[node.id]);
+  const lowest = neurons.reduce((a, b) => (b.cy > a.cy ? b : a));
+  const highest = neurons.reduce((a, b) => (b.cy < a.cy ? b : a));
+  place('Each circle is one <strong>neuron</strong>: its output across all the data. Hover to see it larger.', [
+    (w, h) => ({ box: { x: lowest.cx - 34, y: lowest.cy + 62, w, h }, to: [lowest.cx - 9, lowest.cy + 23], side: 'below', bend: -12 }),
+    (w, h) => ({ box: { x: highest.cx - 34, y: highest.cy - 62 - h, w, h }, to: [highest.cx - 9, highest.cy - 23], side: 'above', bend: -12 }),
+  ]);
+
+  // A connection into the output neuron.
+  const output = nn.getOutputNode(network);
+  const pointOnLink = (sourceId: string) => {
+    const path = document.getElementById(`link${sourceId}-${output.id}`) as unknown as SVGPathElement | null;
+    if (!path) return null;
+    const point = path.getPointAtLength(path.getTotalLength() * .55);
+    return { x: point.x, y: point.y };
+  };
+  const feeding = network[network.length - 2].filter(node => node.outputs.length);
+  const ordered = feeding.map(node => ({ node, ...coordinates[node.id] })).sort((a, b) => a.cy - b.cy);
+  if (ordered.length) {
+    const upper = pointOnLink(ordered[0].node.id);
+    const lower = pointOnLink(ordered[ordered.length - 1].node.id);
+    place('Outputs are mixed by <strong>weights</strong>. Thicker lines are stronger. Click one to change it.', [
+      (w, h) => upper && ({ box: { x: upper.x - 22, y: upper.y - 52 - h, w, h }, to: [upper.x, upper.y - 7], side: 'above', bend: 12 }),
+      (w, h) => lower && ({ box: { x: lower.x - 22, y: lower.y + 52, w, h }, to: [lower.x, lower.y + 7], side: 'below', bend: 12 }),
+    ]);
+  }
+
+  // Inputs that are switched off.
+  const inactive = Object.keys(INPUTS).filter(id => !state[id]).map(id => coordinates[id]).reverse();
+  if (inactive.length) {
+    place('Faded <strong>inputs</strong> are switched off. Click one to feed it to the network.', inactive.map(({ cx, cy }) =>
+      (w: number, h: number): CalloutSpot => ({ box: { x: cx + 58, y: cy - h / 2, w, h }, to: [cx + 25, cy], side: 'right', bend: -6 })));
+  }
 }
 
 function addPlusMinusControl(x: number, layerIndex: number): void {
@@ -1041,7 +1136,7 @@ function initTutorial() {
     const lesson = new DOMParser().parseFromString(html, 'text/html');
     if (lesson.title) {
       d3.select('#workspace-heading').text(lesson.title);
-      document.title = `${lesson.title} — NNVisualizer`;
+      document.title = `${lesson.title} — Neural Network Visualizer`;
     }
     const article = document.querySelector('#article-text');
     const body = document.createElement('div');

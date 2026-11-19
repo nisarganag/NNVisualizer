@@ -1,10 +1,16 @@
-# NNVisualizer
+# Neural Network Visualizer
 
-A neural-network studio with light and dark themes and the interactive learning features of [TensorFlow Playground](https://github.com/tensorflow/playground). Circular activation previews, a live prediction map, and a violet/amber signal palette make the network's behavior visible: violet is positive, amber is negative, and the rest of the interface stays neutral so color always means something. Training runs in a browser Web Worker; Vercel serves a static Vite build. No backend, database, environment variables, GPU service, or API keys are required.
+Three interactive neural networks you can look inside, in the browser:
+
+- **Playground**: build and train a small network, with the learning features of [TensorFlow Playground](https://github.com/tensorflow/playground).
+- **Digits**: draw a digit and watch a convolutional network trained on MNIST read it, filter by filter.
+- **Transformer**: run the real GPT-2 small and follow a prompt through tokens, embeddings, every attention head and MLP, to the next-word probabilities.
+
+A violet/amber signal palette makes behavior visible: violet is positive, amber is negative, and the rest of the interface stays neutral so color always means something. Everything runs in the browser, with training and GPT-2 in Web Workers; Vercel serves a static Vite build. No backend, database, environment variables, GPU service, or API keys are required.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/studio-preview-dark.png">
-  <img alt="NNVisualizer studio showing a network learning to classify two Gaussian clusters" src="docs/studio-preview.png">
+  <img alt="Neural Network Visualizer studio showing a network learning to classify two Gaussian clusters" src="docs/studio-preview.png">
 </picture>
 
 ## Run locally
@@ -27,7 +33,7 @@ npm run preview
 
 ## Deploy to Vercel
 
-1. Use the [NNVisualizer repository](https://github.com/nisarganag/NNVisualizer), or a fork of it.
+1. Use the [Neural Network Visualizer repository](https://github.com/nisarganag/NNVisualizer), or a fork of it.
 2. In Vercel, choose **Add New → Project** and import that repository.
 3. If the repository contains several projects, select the folder containing this README and `package.json` as the **Root Directory**.
 4. Use these settings (also provided in `vercel.json`):
@@ -43,9 +49,13 @@ npm run preview
 
 5. Select **Deploy**. Add a custom domain under the project's Domains settings if desired.
 
-Upload/commit source files and the lockfile. Vercel builds `dist` itself; `node_modules`, `dist`, and local reports are ignored. The URL uses a hash for experiment settings, so shared configurations require no special server routing. Fonts, icons, the training worker, and all application code are served from your own deployment.
+Upload/commit source files and the lockfile. Vercel builds `dist` itself; `node_modules`, `dist`, and local reports are ignored. The URL uses a hash for experiment settings, so shared configurations require no special server routing. Fonts, icons, the workers, model weights and all application code are served from your own deployment.
+
+The GPT-2 weights in `public/models/gpt2-v2/` total about 130 MB, split into files under 19 MB. Visitors download them only when they load the model on the Transformer page; `vercel.json` marks `/models/` as immutable, and the page keeps the files in Cache Storage, so repeat visits don't download them again. Each first load still counts against your Vercel bandwidth allowance.
 
 ## Features
+
+### Playground
 
 - Classification datasets: circle, XOR, two Gaussians, spiral.
 - Regression datasets: plane and multiple Gaussian regions.
@@ -61,10 +71,38 @@ Upload/commit source files and the lockfile. Vercel builds `dist` itself; `node_
 - Light and dark themes. The studio follows the system setting until you choose one with the toggle; the choice is remembered on that device. Each theme has its own signal colors, checked for contrast and color-vision-deficiency separation, and every heatmap, connection and thumbnail repaints without resetting the experiment.
 - Motion that follows cause and effect: the network wires itself up on load, neurons glide into place when you change the architecture, signals flow along the connections while training, hovering a neuron highlights its connections, and the theme change sweeps out from the toggle. Reduced-motion settings turn all of it off.
 - Copy-link sharing, a learning guide, and classroom navigation that preserve the current experiment and epoch.
+- Margin notes on the graph point out what to try: hovering neurons, editing weights, switching inputs on.
 
-The initial setup matches the supplied reference link: Gaussian classification; hidden layers `8,8,8,8,8`; all seven features; Tanh; L1 at `0.01`; learning rate `0.001`; batch size `13`; 50% training data; no noise; seed `0.68936`.
+The default experiment is small and quick to learn: the circle dataset, inputs x₁ and x₂, two hidden layers of 4 and 2 neurons, Tanh, no regularization, learning rate `0.03`, batch size `10`, 50% training data, no noise, seed `0.68936`. The larger configuration from the original reference link (Gaussian data, `8,8,8,8,8`, all seven features, L1 at `0.01`, learning rate `0.001`, batch size `13`) still opens from its URL and is used by the numerical parity tests.
 
 Hover over a connection or a neuron's small bias square and click to edit it. Edits apply immediately. Enter finishes editing and Escape closes the field. To share an experiment, use **Share experiment** or copy the page address. A shared URL restores the starting configuration and seed, not the current trained weights or epoch. If clipboard access is unavailable, a dialog provides a selectable link. Classroom visibility choices take effect when the shared link is opened or **Apply view** is selected.
+
+### Digits
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/digits-preview-dark.png">
+  <img alt="The Digits page: a hand-drawn 3 classified with every convolution, pooling and dense layer shown" src="docs/digits-preview.png">
+</picture>
+
+- A scratchpad for mouse, touch and pen, classified live while you draw, plus **Try an example** (MNIST test digits) and **Clear**.
+- The drawing is preprocessed exactly like MNIST: the ink is scaled into a 20×20 box and centered by mass in 28×28. The page shows that 28×28 input.
+- Every layer is drawn: 8 and 16 feature maps from two 3×3 convolutions, both max-pooling layers, the 64-neuron dense layer, and probabilities for 0–9. Hovering or focusing a feature map shows the filter weights behind it.
+- About 52,000 parameters, trained in this repository on MNIST with rotation, scale, shift and stroke-width augmentation (`scripts/train-mnist-cnn.mjs`). Nothing you draw leaves the browser.
+
+### Transformer
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/transformer-preview-dark.png">
+  <img alt="The Transformer page: GPT-2 small predicting the word after 'The capital of France is', with block 6, head 9 open" src="docs/transformer-preview.png">
+</picture>
+
+- GPT-2 small (124M parameters, OpenAI, MIT license) with its byte-level BPE tokenizer. Type any prompt or choose an example; the model loads with one click and is cached afterwards.
+- Views for tokens and IDs, token and position embeddings, a 12-block overview, the 12 heads of any block, and for any head its queries, keys, values, weights, masked scaled scores, softmax attention and output. Also every token's 3,072 MLP activations, the final hidden state, and the next-token probabilities.
+- Temperature, top-k and top-p update the probabilities instantly; **Generate** samples a token and appends it.
+- The official weights are converted with `scripts/convert-gpt2.mjs` to 8-bit blocks of 64 with float16 scales. Eight embedding columns are kept exact, because GPT-2's final hidden state has a few outsized dimensions that would otherwise magnify rounding. Greedy decoding matches the float32 model token for token, and next-token probabilities stay within about 0.3 percentage points.
+- Inspired by [Transformer Explainer](https://poloclub.github.io/transformer-explainer/) (Georgia Tech Polo Club); the design and code here are independent.
+
+### Playground lessons and URLs
 
 `#tutorial=intro` opens a bundled introductory lesson. Add trusted lesson HTML files to `src/tutorials/` and rebuild to add more. Unknown or invalid lesson names retain the normal article. Legacy URL fields such as `cosX`, `cosY`, and `collectStats` are retained for compatibility; they do not introduce additional features beyond the reference implementation.
 
@@ -90,8 +128,13 @@ flowchart LR
 | `src/playground.ts` | Controls, worker coordination, centered graph geometry, model statistics, and live inspection |
 | `src/heatmap.ts`, `src/linechart.ts` | Responsive Canvas heatmaps and smoothed SVG loss curves |
 | `src/palette.ts` | Theme-aware signal colors for points, activations and connections, read from CSS custom properties |
-| `src/studio.ts` | Theme toggle, navigation, clipboard sharing/fallback, and native control presentation |
-| `index.html`, `styles.css` | Original studio layout, light/dark theme tokens, typography, SVG icons, motion, and responsive design |
+| `src/site.ts` | Shared by every page: theme toggle and the model switcher |
+| `src/studio.ts` | Playground shortcuts, clipboard sharing/fallback, and native control presentation |
+| `index.html`, `styles.css` | Playground page; shared theme tokens, typography, SVG icons, motion, and responsive design |
+| `cnn/index.html`, `src/cnn/` | Digits page: drawing pad, preprocessing and inference (`model.ts`), layer views |
+| `transformer/index.html`, `src/transformer/` | Transformer page: tokenizer, GPT-2 inference (`gpt2.ts`) in a worker, sampling, stage views |
+| `scripts/` | Reproducible model conversion (GPT-2) and training (MNIST CNN); downloaded data stays outside the repository |
+| `public/models/` | Versioned model files served with the site |
 
 Only one automatic training request is in flight at a time. Each reset, data change, or parameter edit invalidates older snapshots. Manual epoch steps are queued explicitly. Each epoch preserves the reference's partial-batch accumulation and half-squared error, including its fixed Tanh classification output and linear regression output. Numerical divergence pauses training with a recovery message.
 

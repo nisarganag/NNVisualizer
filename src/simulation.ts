@@ -1,5 +1,5 @@
 // Epoch/loss/grid algorithms adapted from TensorFlow Playground (Google, 2016),
-// Apache-2.0. NNVisualizer modifications: pure engine, typed snapshots, safe edits.
+// Apache-2.0. Neural Network Visualizer modifications: pure engine, typed snapshots, safe edits.
 import * as nn from './nn';
 import type { Example2D } from './dataset';
 import { constructFeatures, INPUT_FEATURES } from './features';

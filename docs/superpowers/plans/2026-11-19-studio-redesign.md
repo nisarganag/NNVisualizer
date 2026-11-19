@@ -1,4 +1,4 @@
-# NNVisualizer Studio Redesign Plan
+# Neural Network Visualizer Studio Redesign Plan
 
 > **For agentic workers:** Use superpowers:executing-plans for inline implementation and one final independent review.
 

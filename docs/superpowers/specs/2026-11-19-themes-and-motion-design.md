@@ -1,4 +1,4 @@
-# NNVisualizer themes, palette and motion
+# Neural Network Visualizer themes, palette and motion
 
 The user asked for a cooler, more aesthetic design with smoother animation, light and dark modes, and a good color palette. They described outcomes rather than methods, so the visual direction below is the implementer's choice. Function, numerical behavior, URLs, and the tested DOM contract are unchanged.
 

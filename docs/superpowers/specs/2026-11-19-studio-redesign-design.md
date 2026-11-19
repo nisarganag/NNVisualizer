@@ -1,4 +1,4 @@
-# NNVisualizer studio redesign
+# Neural Network Visualizer studio redesign
 
 The user's latest instruction supersedes the initial visual-parity requirement: retain the original playground's features and numerical behavior, but create a completely different, more polished interface.
 

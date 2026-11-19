@@ -1,6 +1,6 @@
-# NNVisualizer design
+# Neural Network Visualizer design
 
-The user approved implementation of the previously discussed TensorFlow Playground adaptation in the existing NNVisualizer project folder and selected Vercel for hosting.
+The user approved implementation of the previously discussed TensorFlow Playground adaptation in the existing Neural Network Visualizer project folder and selected Vercel for hosting.
 
 ## Goal
 
@@ -8,7 +8,7 @@ Reproduce the reference playground's layout, mathematical behavior, datasets, fe
 
 ## Approach
 
-Adapt tensorflow/playground at commit 02469bd3751764b20486015d4202b792af5362a6 under Apache-2.0. Preserve its engine, dataset generation, D3/SVG/Canvas rendering, and desktop geometry. A React rewrite was considered but adds unnecessary parity risk. Use Vite and modern TypeScript tooling, bundle fonts locally, retain copyright/license notices, identify the adaptation as NNVisualizer, and remove the upstream analytics integration.
+Adapt tensorflow/playground at commit 02469bd3751764b20486015d4202b792af5362a6 under Apache-2.0. Preserve its engine, dataset generation, D3/SVG/Canvas rendering, and desktop geometry. A React rewrite was considered but adds unnecessary parity risk. Use Vite and modern TypeScript tooling, bundle fonts locally, retain copyright/license notices, identify the adaptation as Neural Network Visualizer, and remove the upstream analytics integration.
 
 ## Architecture
 

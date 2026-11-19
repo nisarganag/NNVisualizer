@@ -1,5 +1,5 @@
 // Feature definitions adapted from TensorFlow Playground, Copyright 2016 Google Inc.
-// Licensed under Apache-2.0. Extracted into a shared UI/worker module for NNVisualizer.
+// Licensed under Apache-2.0. Extracted into a shared UI/worker module for Neural Network Visualizer.
 export interface InputFeature {
   f: (x: number, y: number) => number;
   label: string;

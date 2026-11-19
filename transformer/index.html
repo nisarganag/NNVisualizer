@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f3f4f9">
+  <meta name="description" content="Run GPT-2 small in your browser and see every step of how a transformer predicts the next word: tokens, embeddings, attention heads, MLPs and probabilities.">
+  <meta property="og:title" content="Transformer — Neural Network Visualizer">
+  <meta property="og:description" content="Watch GPT-2 choose its next word, layer by layer.">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <title>Transformer — Neural Network Visualizer</title>
+  <script>
+    // Apply the saved or system theme before the first paint to avoid a flash.
+    (function () {
+      var theme;
+      try { theme = localStorage.getItem('nnvisualizer-theme'); } catch (error) { theme = null; }
+      if (theme !== 'light' && theme !== 'dark') {
+        theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      document.documentElement.dataset.theme = theme;
+      document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#0f121e' : '#f3f4f9';
+    })();
+  </script>
+</head>
+<body class="page-transformer">
+  <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs>
+      <symbol id="i-network" viewBox="0 0 24 24"><path d="m6 7 6 5 6-5M6 17l6-5 6 5"/><circle cx="4" cy="5" r="2"/><circle cx="4" cy="19" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="20" cy="19" r="2"/></symbol>
+      <symbol id="i-digits" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M9.2 9.6c.5-1.9 5.4-2.1 5.4.6 0 2.3-4.2 3.6-5.6 5.9h5.9"/></symbol>
+      <symbol id="i-attention" viewBox="0 0 24 24"><circle cx="4.5" cy="17.5" r="2"/><circle cx="12" cy="17.5" r="2"/><circle cx="19.5" cy="17.5" r="2"/><path d="M4.5 15.2c.6-7.4 14.4-7.4 15 0M12 15.2c.4-4 7.1-4 7.5 0"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m-5-5 5 5 5-5M5 19.5h14"/></symbol>
+      <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3.5c.6 4.4 2.6 6.4 7 7-4.4.6-6.4 2.6-7 7-.6-4.4-2.6-6.4-7-7 4.4-.6 6.4-2.6 7-7z"/><path d="M19 3v3m-1.5-1.5h3"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M8 16 18 6M8 6h10v10"/></symbol>
+    </defs>
+  </svg>
+  <noscript><p class="noscript">Enable JavaScript to run the transformer.</p></noscript>
+
+  <header class="app-header">
+    <div class="header-inner">
+      <a class="brand" href="/" aria-label="Neural Network Visualizer home">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <defs><clipPath id="brand-clip"><circle cx="16" cy="16" r="14"/></clipPath></defs>
+          <g clip-path="url(#brand-clip)">
+            <rect class="mark-negative" width="32" height="32"/>
+            <path class="mark-positive" d="M0 0h32v8.5c-8.2 1-10.6 10.9-19.6 13.6C8 23.4 3.6 23.3 0 22.4z"/>
+            <circle class="mark-point" cx="22.5" cy="8.5" r="2.1"/>
+          </g>
+        </svg>
+        <span class="brand-name">Neural Network Visualizer</span>
+      </a>
+      <nav class="main-nav" aria-label="Models">
+        <span class="nav-indicator" aria-hidden="true"></span>
+        <a class="nav-button" href="/" aria-label="Playground" data-model="playground"><svg class="icon" aria-hidden="true"><use href="#i-network"/></svg><span>Playground</span></a>
+        <a class="nav-button" href="/cnn/" aria-label="Digits" data-model="cnn"><svg class="icon" aria-hidden="true"><use href="#i-digits"/></svg><span>Digits</span></a>
+        <a class="nav-button is-active" href="/transformer/" aria-current="page" aria-label="Transformer" data-model="transformer"><svg class="icon" aria-hidden="true"><use href="#i-attention"/></svg><span>Transformer</span></a>
+      </nav>
+      <div class="header-actions">
+        <button id="theme-toggle" class="icon-button theme-toggle" type="button" aria-label="Dark theme" aria-pressed="false" title="Switch to dark theme">
+          <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <mask id="theme-moon-mask"><rect width="24" height="24" fill="#fff"/><circle class="moon-bite" cx="17.5" cy="6.5" r="6" fill="#000"/></mask>
+            <circle class="sun-core" cx="12" cy="12" r="5" mask="url(#theme-moon-mask)"/>
+            <g class="sun-rays"><path d="M12 2.6v1.9M12 19.5v1.9M21.4 12h-1.9M4.5 12H2.6M18.65 5.35l-1.35 1.35M6.7 17.3l-1.35 1.35M18.65 18.65 17.3 17.3M6.7 6.7 5.35 5.35"/></g>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <section class="workspace-intro" aria-labelledby="transformer-heading">
+      <div class="intro-copy">
+        <h1 id="transformer-heading">Watch GPT-2 choose its next word.</h1>
+        <p class="intro-description">This is GPT-2 small, the real 124-million-parameter model, running in your browser. Type anything and follow it through every layer.</p>
+      </div>
+    </section>
+
+    <section id="model-loader" class="model-loader" aria-labelledby="loader-heading">
+      <div class="loader-copy">
+        <h2 id="loader-heading">Load GPT-2 small</h2>
+        <p>The model is about 130 MB. It downloads once and stays in this browser, so your next visit opens instantly.</p>
+      </div>
+      <div class="loader-action">
+        <button id="load-model" class="button primary" type="button"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Load the model</button>
+        <div class="load-progress" hidden>
+          <div class="progress-track" role="progressbar" aria-label="Model download" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span></span></div>
+          <span id="load-status" class="readout">Starting…</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="prompt-dock" aria-label="Prompt and sampling">
+      <div class="prompt-field">
+        <label for="prompt-input">Prompt</label>
+        <input id="prompt-input" type="text" maxlength="240" autocomplete="off" spellcheck="false" value="The best way to learn something new is to">
+      </div>
+      <div class="control prompt-examples"><label for="example-select">Examples</label><div class="select"><select id="example-select">
+        <option value="">Choose…</option>
+        <option>The best way to learn something new is to</option>
+        <option>The capital of France is</option>
+        <option>Once upon a time, there was a little robot who</option>
+        <option>A neural network learns by</option>
+        <option>In the middle of the night, she heard</option>
+        <option>def fibonacci(n):</option>
+      </select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
+      <button id="generate-button" class="button primary generate-button" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#i-sparkle"/></svg><span>Generate</span></button>
+      <div class="range-control dock-range">
+        <label for="temperature"><span>Temperature</span><span class="range-value"><span id="temperature-value">0.8</span></span></label>
+        <input type="range" id="temperature" min="0.1" max="2" step="0.1" value="0.8">
+      </div>
+      <div class="sampling-control">
+        <div class="sampling-heading">
+          <span class="field-label" id="sampling-label">Sampling</span>
+          <div class="segmented" role="radiogroup" aria-labelledby="sampling-label">
+            <button type="button" role="radio" aria-checked="true" data-mode="top-k">Top-k</button>
+            <button type="button" role="radio" aria-checked="false" data-mode="top-p">Top-p</button>
+          </div>
+        </div>
+        <div class="range-control dock-range">
+          <label for="sampling-value"><span id="sampling-name">Keep the top k</span><span class="range-value"><span id="sampling-number">5</span></span></label>
+          <input type="range" id="sampling-value" min="1" max="20" step="1" value="5">
+        </div>
+      </div>
+    </section>
+
+    <div id="transformer-flow" class="transformer-flow is-empty" aria-busy="true">
+      <section class="panel stage" aria-labelledby="embedding-heading">
+        <div class="panel-heading"><h2 id="embedding-heading">Embedding</h2><span class="stage-meta"><span id="token-count" class="readout">0</span> tokens</span></div>
+        <div class="stage-body">
+          <ol id="token-list" class="token-list" aria-label="Tokens"></ol>
+          <p class="callout-note">Your text becomes <strong>tokens</strong>. Hover one to see what it attends to.</p>
+          <div class="embedding-stack">
+            <figure><figcaption>Token embedding <span>768 values each</span></figcaption><canvas id="token-embedding" class="matrix"></canvas></figure>
+            <figure><figcaption>+ Position <span>where it sits</span></figcaption><canvas id="position-embedding" class="matrix"></canvas></figure>
+            <figure><figcaption>= Input to block 1</figcaption><canvas id="input-embedding" class="matrix"></canvas></figure>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel stage block-stage" aria-labelledby="blocks-heading">
+        <div class="panel-heading"><h2 id="blocks-heading">Transformer blocks</h2><span class="stage-meta">12 blocks, each with 12 attention heads and an MLP</span></div>
+        <div class="stage-body">
+          <div id="block-strip" class="block-strip" role="tablist" aria-label="Transformer block"></div>
+          <div class="block-detail">
+            <div class="heads-column">
+              <h3>Attention heads <span id="heads-caption">in block 1</span></h3>
+              <div id="head-grid" class="head-grid" role="tablist" aria-label="Attention head"></div>
+              <p class="callout-note">Each <strong>head</strong> looks for something different. Choose one to open it.</p>
+            </div>
+            <div class="head-detail">
+              <h3 id="head-title">Head 1</h3>
+              <div class="qkv-grid">
+                <figure><figcaption>Query <span>Q = X · W<sub>Q</sub></span></figcaption><canvas id="query-matrix" class="matrix rows"></canvas></figure>
+                <figure><figcaption>Key <span>K = X · W<sub>K</sub></span></figcaption><canvas id="key-matrix" class="matrix rows"></canvas></figure>
+                <figure><figcaption>Value <span>V = X · W<sub>V</sub></span></figcaption><canvas id="value-matrix" class="matrix rows"></canvas></figure>
+              </div>
+              <figure class="weights-figure"><figcaption>This head’s weights <span>768 inputs across, 64 outputs down</span></figcaption>
+                <div class="weight-strips">
+                  <span class="weight-label">W<sub>Q</sub></span><canvas id="query-weights" class="weights"></canvas>
+                  <span class="weight-label">W<sub>K</sub></span><canvas id="key-weights" class="weights"></canvas>
+                  <span class="weight-label">W<sub>V</sub></span><canvas id="value-weights" class="weights"></canvas>
+                </div>
+              </figure>
+              <div class="attention-grid">
+                <figure><figcaption>Scores <span>Q·Kᵀ / √64, future masked</span></figcaption><canvas id="score-matrix" class="matrix square"></canvas></figure>
+                <figure><figcaption>Attention <span>softmax of each row</span></figcaption><canvas id="attention-matrix" class="matrix square"></canvas></figure>
+                <figure><figcaption>Output <span>attention · V</span></figcaption><canvas id="head-output" class="matrix rows"></canvas></figure>
+              </div>
+              <p id="attention-readout" class="attention-readout" aria-live="polite"></p>
+            </div>
+          </div>
+          <figure class="mlp-figure"><figcaption>MLP <span>768 → 3,072 neurons with GELU → 768, for every token</span></figcaption><canvas id="mlp-matrix" class="matrix wide"></canvas></figure>
+        </div>
+      </section>
+
+      <section class="panel stage" aria-labelledby="probability-heading">
+        <div class="panel-heading"><h2 id="probability-heading">Next token</h2></div>
+        <div class="stage-body">
+          <ol id="candidate-list" class="candidate-list" aria-label="Most likely next tokens"></ol>
+          <p id="sampling-summary" class="sampling-summary"></p>
+          <p class="callout-note">Lower the <strong>temperature</strong> for safer choices; raise it for surprises.</p>
+          <figure><figcaption>Final hidden state <span>scored against all 50,257 tokens</span></figcaption><canvas id="final-hidden" class="matrix strip"></canvas></figure>
+        </div>
+      </section>
+    </div>
+
+    <article class="learning-section transformer-guide" aria-labelledby="guide-heading">
+      <div class="section-intro"><h2 id="guide-heading">From words to a prediction.</h2><p>GPT-2 repeats one recipe twelve times, then turns its last vector into a probability for every token it knows.</p></div>
+      <div class="guide-grid">
+        <section class="guide-card"><h3>Tokens and embeddings</h3><p>Text is split into tokens: whole words, pieces of words, or punctuation. Each token looks up a learned vector of 768 numbers, and a second vector records its position.</p></section>
+        <section class="guide-card"><h3>Attention</h3><p>Each head compares a token's query with every earlier token's key. The softmax of those scores decides how much of each value flows forward. Future tokens are masked, so the model can't peek ahead.</p></section>
+        <section class="guide-card"><h3>MLP and the next word</h3><p>An MLP then reshapes every token's vector on its own. After twelve blocks, the last vector is compared with all 50,257 token embeddings to score what comes next.</p></section>
+      </div>
+      <details class="credits"><summary>Model and credits<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+        <p>GPT-2 small and its tokenizer are by OpenAI, released under the MIT license. This page runs the original weights, converted to 8-bit blocks with exact values kept where rounding would change predictions; next-token probabilities stay within a fraction of a percentage point of the original. Inference is Neural Network Visualizer's own TypeScript implementation, running in a Web Worker.</p>
+        <p>The idea of exploring GPT-2 this way comes from <a href="https://poloclub.github.io/transformer-explainer/">Transformer Explainer</a> by Aeree Cho, Grace C. Kim, Alexander Karpekov, Alec Helbling, Jay Wang, Seongmin Lee, Benjamin Hoover and Polo Chau (Georgia Tech). This page is an independent design; no code or graphics are shared.</p>
+      </details>
+    </article>
+  </main>
+  <footer class="app-footer"><span class="footer-brand">Neural Network Visualizer<span>Built for the moment it clicks.</span></span><div><a href="https://huggingface.co/openai-community/gpt2" target="_blank" rel="noopener noreferrer">GPT-2 model card<svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a><a href="/THIRD_PARTY_NOTICES.txt">Open-source licenses</a></div></footer>
+  <p id="transformer-status" class="simulation-status" role="status" aria-live="polite" hidden></p>
+  <script type="module" src="/src/transformer/main.ts"></script>
+</body>
+</html>
