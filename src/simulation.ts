@@ -45,12 +45,16 @@ export class TrainingEngine {
       this.optimizer = optimizer;
       this.updates = 0;
     }
+    // A hand-drawn set can have fewer training points than one batch, which would never reach a
+    // batch boundary and never train; it trains as one batch instead. The reference's datasets
+    // always fill a batch, so this changes nothing there.
+    const batchSize = Math.max(1, Math.min(settings.batchSize, this.trainData.length));
     this.trainData.forEach((point, i) => {
       nn.forwardProp(this.network, constructFeatures(this.config.inputIds, point.x, point.y));
       nn.backProp(this.network, point.label, nn.Errors.SQUARE);
       // Deliberately match the reference: incomplete batches carry their
       // accumulated gradients into the next epoch rather than being flushed.
-      if ((i + 1) % settings.batchSize === 0) {
+      if ((i + 1) % batchSize === 0) {
         nn.updateWeights(this.network, settings.learningRate, settings.regularizationRate, optimizer, ++this.updates);
       }
     });

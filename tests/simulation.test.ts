@@ -30,14 +30,34 @@ describe('TrainingEngine', () => {
   });
 
   it('carries a partial batch across epochs as the reference does', () => {
-    const engine = new TrainingEngine(config, model, points, points);
+    // Batches of 2 over 3 points: the third point's gradient waits for the next epoch's batch.
+    const three = [...points, ...points, { x: 0, y: 0, label: 0 }];
+    const engine = new TrainingEngine(config, model, three, three);
     const settings = { learningRate: .1, regularizationRate: 0, batchSize: 2 };
     engine.step(settings);
+    // Only the first two points were applied: the same step as above. Flushing the third
+    // (error .8 at x = 0) would have moved the bias on to .72.
+    expect(engine.snapshot(10).model).toMatchObject({
+      nodes: [{ bias: expect.closeTo(.8, 12) }],
+      links: [{ weight: expect.closeTo(1.4, 12) }],
+    });
     engine.step(settings);
-    // One point per epoch never hits an in-epoch batch boundary.
-    expect(engine.snapshot(10)).toMatchObject({ epoch: 2, lossTrain: 2, model });
-    engine.step({ ...settings, batchSize: 1 });
-    expect(engine.snapshot(10)).toMatchObject({ lossTrain: expect.closeTo(0, 12) });
+    // The carried gradient joins two points the model now fits exactly: .8 averaged over 3.
+    expect(engine.snapshot(10).model).toMatchObject({
+      nodes: [{ bias: expect.closeTo(.8 - .1 * .8 / 3, 12) }],
+      links: [{ weight: expect.closeTo(1.4, 12) }],
+    });
+  });
+
+  it('trains a hand-drawn set smaller than one batch as a single batch', () => {
+    const engine = new TrainingEngine(config, model, points, points);
+    engine.step({ learningRate: .1, regularizationRate: 0, batchSize: 10 });
+    // The same update as a batch of 1: one point, one step.
+    expect(engine.snapshot(10)).toMatchObject({
+      epoch: 1,
+      lossTrain: expect.closeTo(0, 12),
+      model: { nodes: [{ bias: expect.closeTo(.8, 12) }], links: [{ weight: expect.closeTo(1.4, 12) }] },
+    });
   });
 
   it('edits a bias or weight without resetting the epoch', () => {
