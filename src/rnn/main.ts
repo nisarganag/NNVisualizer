@@ -5,7 +5,12 @@ import * as d3 from 'd3';
 import { initializeSite, reducedMotion } from '../site';
 import { signalRange, THEME_CHANGE_EVENT } from '../palette';
 import { applySampling, sample, type SamplingResult, type SamplingSettings } from '../transformer/sampling';
-import { CharLstmRun, encodeText, parseCharLstm, type CharLstm, type CharLstmMeta } from './model';
+import { CharLstmRun, encodeText, parseCharLstm, spanReach, type CharLstm, type CharLstmMeta } from './model';
+import { createGates, type Gates } from './gates';
+import {
+  NEARLY_CERTAIN, SPAN_REACH, characterName, characters, correlationText, glyph, paintSpanBars, percent, prepareCanvas, surpriseLevel,
+  type ChartColors,
+} from './views';
 
 initializeSite();
 
@@ -18,19 +23,8 @@ const GENERATE_LENGTH = 120;
 const GENERATE_INTERVAL_MS = 33;
 /** Cell states beyond ±CELL_SCALE get the strongest color. */
 const CELL_SCALE = 2;
-/**
- * Influence (change in log-probability per unit of input) that fills the span bars.
- * A larger maximum rescales them; a smaller one keeps faint pulls looking faint. Most
- * guesses peak well above it (about 1 when unsure, 0.1 when 90–98% sure); guesses
- * that are all but certain peak near 0.02 and so look faint, as they should.
- */
-const SPAN_SCALE = .1;
-/** Above this probability the guess hardly depends on any one character, and the span view says so. */
-const NEARLY_CERTAIN = .98;
 /** Cells whose correlation with a text feature is weaker than this are not pointed out. */
 const NOTABLE_CORRELATION = .5;
-/** The memory span traces this many characters back; earlier ones have no measurable pull. */
-const SPAN_REACH = 200;
 /** Generate picks each new character from this many of the likeliest. */
 const GENERATE_TOP = 5;
 /** How the next-character list names characters that don't start a word. */
@@ -71,6 +65,8 @@ const statusLine = $('rnn-status');
 
 let model: CharLstm | null = null;
 let run: CharLstmRun | null = null;
+/** The comparison with the gateless network, below the memory panel. */
+let gates: Gates | null = null;
 /** The step whose prediction is shown; −1 follows the end of the text. */
 let chosenStep = -1;
 /** The memory cell traced below the cell-state map; picked automatically until someone chooses one. */
@@ -99,7 +95,7 @@ function setStatus(message: string) {
 
 let diverging = new Uint8ClampedArray(256 * 3);
 let sequential = new Uint8ClampedArray(256 * 3);
-let colors = { positive: '#744ed7', negative: '#cf6d01', ink: '#1c1e2d', line: 'rgb(28 30 45 / .16)' };
+let colors: ChartColors = { positive: '#744ed7', negative: '#cf6d01', ink: '#1c1e2d', line: 'rgb(28 30 45 / .16)', well: '#eff0f6' };
 function buildRamps() {
   const [negative, neutral, positive] = signalRange();
   const ramp = (scale: (t: number) => string) => {
@@ -114,7 +110,7 @@ function buildRamps() {
   sequential = ramp(d3.scale.linear<string, string>().domain([0, 1]).range([neutral, positive]).interpolate(d3.interpolateLab));
   const style = getComputedStyle(document.documentElement);
   const read = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
-  colors = { positive, negative, ink: read('--ink', colors.ink), line: read('--line-strong', colors.line) };
+  colors = { positive, negative, ink: read('--ink', colors.ink), line: read('--line-strong', colors.line), well: read('--well', colors.well) };
 }
 buildRamps();
 
@@ -128,9 +124,6 @@ const alpha = (color: string, opacity: number) => {
 const steps = () => run?.length ?? 0;
 /** The step the side panels describe: the chosen one, or the last. */
 const focusStep = () => (chosenStep >= 0 && chosenStep < steps() ? chosenStep : steps() - 1);
-const characterName = (c: string) => (c === ' ' ? 'space' : c === '\n' ? 'new paragraph' : c);
-const glyph = (c: string) => (c === ' ' ? '␣' : c === '\n' ? '↵' : c);
-const percent = (p: number) => (p < .001 ? '<0.1%' : `${(p * 100).toFixed(1)}%`);
 /** A predicted character in a sentence: “e”, or a space. */
 const guessName = (index: number) => {
   const c = model.vocabulary[index];
@@ -160,8 +153,6 @@ function textBefore(t: number, length = 14): string {
   return `${start > 0 ? '…' : ''}${text}`;
 }
 
-/** Tint steps for surprise: none below 1 bit, then stronger at 3, 5 and 8 bits. */
-const surpriseLevel = (bits: number) => (bits < 1 ? 0 : bits < 3 ? 1 : bits < 5 ? 2 : bits < 8 ? 3 : 4);
 function surpriseLabel(t: number): string {
   const bits = run.surprisal(t);
   if (Number.isNaN(bits)) return 'Nothing read before it, so nothing predicted it';
@@ -199,8 +190,9 @@ function renderCells(from = 0) {
   while (items.length > n) items[items.length - 1].remove();
 }
 
-/** Selection state, the roving tab stop and the column marker for the focused step. */
+/** Selection state, the roving tab stop and the column marker for the focused step, here and in the comparison. */
 function markStep() {
+  gates?.markStep();
   const t = focusStep();
   const items = cellList.children as HTMLCollectionOf<HTMLElement>;
   cellList.querySelectorAll('[aria-selected="true"]').forEach(item => item.setAttribute('aria-selected', 'false'));
@@ -259,21 +251,9 @@ function paintDetailMap() {
   });
 }
 
-/** A canvas sized to its CSS box at the screen's resolution, cleared. */
-function prepare(canvas: HTMLCanvasElement) {
-  const ratio = Math.min(2, window.devicePixelRatio || 1);
-  const { width, height } = canvas.getBoundingClientRect();
-  canvas.width = Math.max(1, Math.round(width * ratio));
-  canvas.height = Math.max(1, Math.round(height * ratio));
-  const context = canvas.getContext('2d');
-  context.setTransform(ratio, 0, 0, ratio, 0, 0);
-  context.clearRect(0, 0, width, height);
-  return { context, width, height };
-}
-
 /** The traced cell's state over the text: a line around zero, violet above and amber below. */
 function paintUnitChart() {
-  const { context, width, height } = prepare(unitChart);
+  const { context, width, height } = prepareCanvas(unitChart);
   const n = steps();
   if (!n) return;
   const H = model.hiddenSize;
@@ -347,62 +327,37 @@ function paintGateStrips() {
 
 /* ---------- Memory span ---------- */
 
-/**
- * How much each character up to the focused step shaped its prediction (cached for
- * the current text and step): bars over the characters, violet where a character
- * pushed toward the most likely next character and amber where it pushed away.
- */
-function renderSpan() {
-  const { context, width, height } = prepare(spanBars);
-  const t = focusStep();
-  const summary = $('span-summary');
-  if (t < 0) { summary.textContent = ''; return; }
+/** What shaped the guess after step t: the LSTM's influence, cached for the current text and step. */
+function lstmSpan(t: number) {
   const key = prefixKey(t);
   if (influence?.key !== key) {
     const target = run.topCharacter(t);
     influence = { key, values: run.influence(t, target, SPAN_REACH), target };
   }
-  const { values, target } = influence;
-  const step = width / steps();
-  let max = SPAN_SCALE;
-  let total = 0;
-  for (let s = 0; s <= t; s++) { max = Math.max(max, Math.abs(values[s])); total += Math.abs(values[s]); }
-  const base = Math.round(height * .72) + .5;
-  context.strokeStyle = colors.line;
-  context.lineWidth = 1;
-  context.beginPath();
-  context.moveTo(0, base);
-  context.lineTo(width, base);
-  context.stroke();
-  const gap = Math.min(3, step * .2);
-  for (let s = 0; s <= t; s++) {
-    const v = values[s] / max;
-    const room = v >= 0 ? base - 2 : height - base - 1;
-    const h = Math.abs(v) * room;
-    if (h < .5) continue;
-    context.fillStyle = v >= 0 ? colors.positive : colors.negative;
-    const x = s * step + gap;
-    const w = Math.max(1, step - 2 * gap);
-    context.beginPath();
-    if (v >= 0) context.roundRect(x, base - h, w, h, [2, 2, 0, 0]);
-    else context.roundRect(x, base, w, h, [0, 0, 2, 2]);
-    context.fill();
+  return influence;
+}
+
+/**
+ * How much each character up to the focused step shaped its prediction: bars over the
+ * characters, violet where a character pushed toward the most likely next character
+ * and amber where it pushed away.
+ */
+function renderSpan() {
+  const t = focusStep();
+  const summary = $('span-summary');
+  if (t < 0) {
+    paintSpanBars(spanBars, null, t, 0, colors);
+    summary.textContent = '';
+    return;
   }
+  const { values, target } = lstmSpan(t);
+  paintSpanBars(spanBars, values, t, steps(), colors);
   // How many of the latest characters hold half, and nine tenths, of the total influence.
-  const reach = (share: number) => {
-    let sum = 0;
-    for (let s = t; s >= 0; s--) {
-      sum += Math.abs(values[s]);
-      if (sum >= share * total) return t - s + 1;
-    }
-    return t + 1;
-  };
-  const half = reach(.5);
-  const most = reach(.9);
+  const half = spanReach(values, t, .5);
+  const most = spanReach(values, t, .9);
   const guess = guessName(target);
-  const count = (k: number) => (k === 1 ? 'character' : `${k} characters`);
   const certainty = run.probabilities[t * model.inputSize + target];
-  const shares = `Half came from the last ${count(half)}, 90% from the last ${count(most)}`;
+  const shares = `Half came from the last ${characters(half)}, 90% from the last ${characters(most)}`;
   const reading = t === 0 ? 'only the first character so far'
     : certainty >= NEARLY_CERTAIN ? `it is ${percent(certainty)} sure, so no single character moves it much`
       : shares;
@@ -587,6 +542,7 @@ function renderStep() {
   renderSpan();
   renderCandidates();
   renderReadout();
+  gates?.renderStep();
 }
 
 function renderAll(from = 0) {
@@ -597,6 +553,7 @@ function renderAll(from = 0) {
   paintCellMap();
   paintDetailMap();
   renderUnit();
+  gates?.render(from);
   renderStep();
   renderScore();
   syncGenerateButton();
@@ -620,7 +577,10 @@ function schedule(part: { from?: number; step?: boolean; follow?: boolean }) {
     if (from !== Infinity) renderAll(from);
     else if (step) renderStep();
     arriving = -1;
-    if (follow) timeline.scrollLeft = timeline.scrollWidth;
+    if (follow) {
+      timeline.scrollLeft = timeline.scrollWidth;
+      gates?.followEnd();
+    }
   });
 }
 
@@ -639,6 +599,7 @@ function update({ fresh = false } = {}) {
     : '';
   const indices = encoded.indices.slice(0, MAX_CHARACTERS);
   const reused = run.setIndices(indices);
+  gates?.sync(indices);
   if (chosenStep >= indices.length) chosenStep = -1;
   if (fresh && !unitChosen) unit = liveliestUnit();
   sampling = null;
@@ -827,7 +788,7 @@ function renderCellPicks(meta: CharLstmMeta) {
     button.className = 'button subtle small';
     button.dataset.cell = String(entry.cell);
     button.textContent = entry.label;
-    button.title = `Cell ${entry.cell + 1}: ${entry.note} (correlation ${entry.correlation.toFixed(2)} on text it never trained on)`;
+    button.title = `Cell ${entry.cell + 1}: ${entry.note} (correlation ${correlationText(entry.correlation)} on text it never trained on)`;
     button.addEventListener('click', () => chooseUnit(entry.cell));
     return button;
   }));
@@ -859,8 +820,12 @@ async function initialize() {
     $('validation-bits').textContent = meta.validationBitsPerChar.toFixed(2);
     workbench.setAttribute('aria-busy', 'false');
     update({ fresh: true });
+    gates = createGates({ run, meta, focusStep, chooseStep, lstmSpan, colors: () => colors, settings });
   } catch {
     setStatus('The network could not load. Reload the page to try again.');
+    // The comparison needs the LSTM too.
+    $('gates-status').textContent = 'The comparison could not start without the LSTM.';
+    $('gates-panel').setAttribute('aria-busy', 'false');
   }
 }
 initialize();

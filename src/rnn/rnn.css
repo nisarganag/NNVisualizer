@@ -23,18 +23,18 @@
 /* The candidates stay in view beside the tall memory panel, when the window is tall enough to show them whole. */
 @media (min-height: 720px) and (min-width: 901px) { .next-panel { position: sticky; top: 80px; } }
 
-/* Surprise legend: the same amber steps as the Transformer's prompt strip. */
-.memory-panel { --tint-1: 15%; --tint-2: 29%; --tint-3: 45%; --tint-4: 62%; }
-:root[data-theme='dark'] .memory-panel { --tint-1: 18%; --tint-2: 30%; --tint-3: 41%; --tint-4: 52%; }
+/* Surprise legend: the same amber steps as the Transformer's prompt strip, in both networks' rows. */
+.memory-panel, .gates-panel { --tint-1: 15%; --tint-2: 29%; --tint-3: 45%; --tint-4: 62%; }
+:root[data-theme='dark'] :is(.memory-panel, .gates-panel) { --tint-1: 18%; --tint-2: 30%; --tint-3: 41%; --tint-4: 52%; }
 .surprise-key { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 4px 24px; }
 .surprise-key .callout-note { flex: 1 1 320px; margin: 10px 0 6px; }
 .surprise-legend { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 8px; color: var(--ink-3); font-size: 12px; white-space: nowrap; cursor: help; }
 .surprise-scale { display: inline-flex; gap: 2px; }
 .surprise-scale i { width: 12px; height: 12px; border-radius: 3px; }
-.memory-panel [data-surprise='1'] { background: color-mix(in oklab, var(--signal-negative) var(--tint-1), var(--surface)); }
-.memory-panel [data-surprise='2'] { background: color-mix(in oklab, var(--signal-negative) var(--tint-2), var(--surface)); }
-.memory-panel [data-surprise='3'] { background: color-mix(in oklab, var(--signal-negative) var(--tint-3), var(--surface)); }
-.memory-panel [data-surprise='4'] { background: color-mix(in oklab, var(--signal-negative) var(--tint-4), var(--surface)); }
+:is(.memory-panel, .gates-panel) [data-surprise='1'] { background: color-mix(in oklab, var(--signal-negative) var(--tint-1), var(--surface)); }
+:is(.memory-panel, .gates-panel) [data-surprise='2'] { background: color-mix(in oklab, var(--signal-negative) var(--tint-2), var(--surface)); }
+:is(.memory-panel, .gates-panel) [data-surprise='3'] { background: color-mix(in oklab, var(--signal-negative) var(--tint-3), var(--surface)); }
+:is(.memory-panel, .gates-panel) [data-surprise='4'] { background: color-mix(in oklab, var(--signal-negative) var(--tint-4), var(--surface)); }
 
 /* The timeline: every row has one column per character, so it all scrolls together. */
 .timeline { position: relative; overflow-x: auto; overscroll-behavior-x: contain; container-type: inline-size; padding-bottom: 6px; scrollbar-width: thin; scrollbar-color: var(--well-hover) transparent; }
@@ -103,6 +103,65 @@
 .score-note { grid-column: 1 / -1; margin: 0; color: var(--ink-2); font-size: 12.5px; line-height: 1.45; }
 .score-note:empty { display: none; }
 
+/* Why gates matter: the same text read by a network without gates, side by side with the LSTM. */
+.gates-panel { margin-top: 16px; }
+.gates-panel .stage-body > * { transition: opacity .4s; }
+.gates-panel.is-loading .stage-body > :not(.gates-intro, .gates-status), .gates-panel.is-empty .stage-body > :not(.gates-intro, .gates-status) { opacity: .38; }
+.gates-panel.is-empty .step-marker { display: none; }
+.gates-intro { max-width: 78ch; margin: 2px 0 4px; color: var(--ink-2); font-size: 14.5px; line-height: 1.55; }
+.gates-status { margin: 6px 0 2px; color: var(--ink-3); font-size: 13px; }
+.gates-status[data-kind='error'] { color: var(--critical); }
+.gates-timeline { margin-top: 14px; }
+.quote-chart { display: block; width: calc(var(--steps, 0) * var(--step)); height: 52px; border-radius: 3px; }
+.gates-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(260px, 1fr); gap: 24px 48px; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); }
+.gates-title { font-size: 13px; font-weight: 650; }
+.gates-subtitle { display: block; margin-top: 2px; color: var(--ink-3); font-size: 12.5px; }
+.gates-small { margin-top: 10px; color: var(--ink-2); font-size: 12.5px; line-height: 1.5; }
+.gates-small:empty { display: none; }
+.fade-figure { min-width: 0; margin: 0; }
+.fade-key { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 10px 0 2px; color: var(--ink-2); font-size: 12px; }
+.key-item { display: inline-flex; align-items: center; gap: 7px; }
+.key-item[hidden], .key-hint[hidden] { display: none; }
+.key-hint { color: var(--ink-3); }
+.key-line { width: 26px; height: 8px; overflow: visible; }
+.fade-chart { display: block; width: 100%; height: 230px; overflow: visible; }
+.fade-grid line { stroke: var(--line); }
+.fade-axis { stroke: var(--line-strong); }
+.fade-tick { fill: var(--ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.fade-line, .key-line line { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.fade-line.is-lstm, .key-line.is-lstm line { stroke: var(--signal-positive); }
+.fade-line.is-rnn, .key-line.is-rnn line { stroke: var(--ink); stroke-dasharray: 6 4; stroke-linecap: butt; }
+.fade-line.is-reference { stroke-width: 4; opacity: .3; }
+.fade-line.is-rnn.is-reference { stroke-dasharray: 9 6; }
+.fade-line.is-text { stroke-width: 1.75; }
+.key-line.is-lstm line, .key-line.is-rnn line { stroke-width: 2.25; }
+.key-line.is-reference line { stroke: var(--ink); stroke-width: 4; opacity: .3; }
+:root[data-theme='dark'] :is(.fade-line.is-reference, .key-line.is-reference line) { opacity: .45; }
+.key-line.is-text line { stroke: var(--ink); stroke-width: 1.75; }
+.gates-scores { width: 100%; border-collapse: collapse; font-size: 13px; }
+.gates-scores caption { margin-bottom: 4px; text-align: left; }
+.gates-scores th, .gates-scores td { padding: 7px 0 7px 12px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+.gates-scores thead th { padding-top: 4px; color: var(--ink-3); font-size: 12px; font-weight: 500; }
+.gates-scores tbody th { padding-left: 0; color: var(--ink-2); font-weight: 500; text-align: left; white-space: normal; }
+.gates-scores tbody td { font-size: 20px; font-weight: 680; line-height: 1.1; letter-spacing: -.02em; }
+.gates-scores.is-empty tbody td { color: var(--ink-3); }
+.quote-evidence { margin-top: 24px; }
+.quote-evidence[hidden] { display: none; }
+.quote-bar { display: grid; grid-template-columns: minmax(0, 8.5em) minmax(40px, 1fr) 3.4em; align-items: center; gap: 10px; margin: 8px 0 0; color: var(--ink-2); font-size: 12.5px; }
+.quote-bar .bar { height: 8px; overflow: hidden; border-radius: 4px; background: var(--well-hover); }
+.quote-bar .bar i { display: block; width: calc(var(--strength, 0) * 100%); height: 100%; border-radius: inherit; background: var(--ink); transition: width .45s var(--ease-out); }
+.quote-bar #quote-lstm-bar { background: var(--signal-positive); }
+.quote-bar .readout { color: var(--ink); font-weight: 600; text-align: right; }
+.gates-continue { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.continue-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 24px; }
+.continue-results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; margin-top: 14px; }
+.continue-results[hidden] { display: none; }
+.continuation { display: grid; gap: 4px; margin: 0; padding: 12px 14px; border-radius: var(--radius-control); background: var(--well); }
+.continuation-label { color: var(--ink-3); font-size: 12px; font-weight: 600; }
+.continuation-text { color: var(--ink); font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.continuation-text .known { color: var(--ink-3); }
+.gates-notes .callout-note { margin-top: 18px; }
+
 .page-rnn .guide-card h3 { margin-top: 0; }
 
 @keyframes char-in { from { opacity: 0; transform: translateY(6px) scale(.8); } }
@@ -114,6 +173,7 @@
 }
 @media (max-width: 900px) {
   .rnn-workbench { grid-template-columns: minmax(0, 1fr); }
+  .gates-grid, .continue-results { grid-template-columns: minmax(0, 1fr); }
   .candidate { grid-template-columns: 28px minmax(0, 1.7fr) minmax(28px, 1fr) 46px; gap: 10px; }
   .memory-notes { grid-template-columns: minmax(0, 1fr); }
 }
@@ -122,6 +182,7 @@
   .prompt-field, .dock-controls, .prompt-examples, .dock-range { flex: 1 1 100%; }
   .generate-button { flex: 1 1 auto; }
   .timeline-track { --step: 14px; --map-height: 192px; }
+  .fade-chart { height: 210px; }
   .long-label { display: none; }
   .stage-meta { display: none; }
 }

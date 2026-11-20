@@ -194,9 +194,12 @@ Yann LeCun, Corinna Cortes and Christopher J. C. Burges.
 https://yann.lecun.com/exdb/mnist/
 Licensed under Creative Commons Attribution-Share Alike 3.0
 (https://creativecommons.org/licenses/by-sa/3.0/).
-The Digits page's network was trained on MNIST (scripts/train-mnist-cnn.mjs).
-public/models/mnist-samples-v1.bin contains ten digits from the MNIST test set,
-shared under the same license.
+The Digits page's network was trained on MNIST (scripts/train-mnist-cnn.mjs),
+and so was the Autoencoder page's (scripts/train-mnist-vae.mjs).
+public/models/mnist-samples-v1.bin contains ten digits from the MNIST test set
+and public/models/mnist-vae-examples-v1.bin one hundred; together with the map
+positions of 5,000 test digits in public/models/mnist-vae-codes-v1.bin, they
+are shared under the same license.
 
 
 Project Gutenberg books (training data only)
@@ -225,7 +228,8 @@ Project Gutenberg (https://www.gutenberg.org/):
 No Project Gutenberg file is distributed with Neural Network Visualizer. The
 training script (scripts/train-char-lstm.mjs) reads the books from a local
 download, removes the Project Gutenberg header, footer and license, and uses
-the text only to train public/models/char-lstm-v1.bin. Paragraphs containing
+the text only to train public/models/char-lstm-v1.bin and the gateless network
+in public/models/char-rnn-v1.bin. Paragraphs containing
 period slurs were left out of training. The page's example sentences quote
 short passages from these public-domain works.
 

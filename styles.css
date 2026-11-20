@@ -533,6 +533,11 @@ dialog .dialog-note { margin-bottom: 0; color: var(--ink-3); font-size: 13px; }
   .epoch-counter { border-right: 0; }
   .graph-tip { flex-wrap: wrap; }
 }
+/* Five model tabs: below 900px they show icons only; their names remain the links' accessible labels. */
+@media (max-width: 900px) {
+  .nav-button { width: 38px; padding: 0; }
+  .nav-button > span { display: none; }
+}
 @media (max-width: 760px) {
   html { scroll-padding-top: 76px; }
   body { font-size: 14px; }

@@ -1,0 +1,118 @@
+/* Autoencoder page: a variational autoencoder's map of digits. Builds on the shared tokens in styles.css. */
+
+/* The map leads; what the point decodes to sits right beside it; the scratchpad follows. */
+.vae-workbench { display: grid; grid-template-columns: minmax(0, 1fr) 312px 304px; grid-template-areas: 'map decoded pad'; gap: 16px; align-items: start; }
+.map-panel { grid-area: map; }
+.decoded-panel { grid-area: decoded; }
+.pad-panel { grid-area: pad; }
+.vae-workbench.is-loading .stage-body { opacity: .38; }
+.vae-workbench figure { margin: 0; }
+.vae-workbench figcaption { margin-bottom: 8px; color: var(--ink-2); font-size: 12.5px; font-weight: 650; }
+.vae-workbench figcaption > span { display: block; margin-top: 2px; color: var(--ink-3); font-weight: 400; }
+.vae-workbench h3 { font-size: 14px; font-weight: 680; }
+.vae-workbench sub { font-size: .68em; line-height: 0; }
+
+/* ---------- Map ---------- */
+.map-panel .panel-heading { flex-wrap: wrap; }
+/* Square, and never taller than the window leaves room for. */
+.map-frame { position: relative; width: min(100%, max(300px, calc(100svh - 196px))); aspect-ratio: 1; margin: 4px auto 0; border-radius: var(--radius-inner); background: var(--stage); box-shadow: inset 0 0 0 1px var(--line-strong); cursor: crosshair; touch-action: none; user-select: none; -webkit-user-select: none; }
+.map-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; border-radius: inherit; }
+.axis-label { position: absolute; z-index: 1; color: var(--ink-3); font-family: var(--font-math); font-size: 15px; line-height: 1; pointer-events: none; }
+.axis-label sub { font-size: 10px; }
+.axis-x { right: 10px; bottom: 9px; }
+.axis-y { left: 10px; top: 9px; }
+.probe { position: absolute; z-index: 2; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; background: var(--surface); box-shadow: 0 0 0 2px var(--ink), 0 0 0 7px var(--halo), 0 8px 18px -6px var(--node-shadow); cursor: grab; touch-action: none; transition: box-shadow .25s var(--ease-out), transform .25s var(--ease-out); }
+.probe::after { content: ''; position: absolute; inset: 7px; border-radius: 50%; background: var(--ink); }
+/* A bigger target for fingers than the visible point. */
+.probe::before { content: ''; position: absolute; inset: -12px; border-radius: 50%; }
+.probe:focus-visible { outline: 2px solid var(--ink); outline-offset: 7px; }
+.map-frame.is-dragging, .map-frame.is-dragging .probe { cursor: grabbing; }
+/* The decoded grid fills the map edge to edge; the dots' key and the axis names would sit on its digits. */
+.map-frame.is-grid .axis-label { display: none; }
+.map-panel:has(.map-frame.is-grid) .map-key { visibility: hidden; }
+.map-panel .when-grid, .map-panel:has(.map-frame.is-grid) .when-codes { display: none; }
+.map-panel:has(.map-frame.is-grid) .when-grid { display: inline; }
+.map-frame.is-dragging .probe { transform: scale(1.12); }
+.map-help { margin: 10px auto 0; color: var(--ink-3); font-size: 12.5px; text-align: center; }
+.map-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 24px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.map-key { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 16px; margin: 0; color: var(--ink-3); font-size: 12.5px; }
+.key-item { display: inline-flex; align-items: center; gap: 7px; }
+.key-dot { width: 7px; height: 7px; border-radius: 50%; background: color-mix(in oklab, var(--ink) 45%, transparent); }
+.key-dot.is-highlight { background: var(--signal-positive); }
+.key-ring { width: 13px; height: 13px; border: 1.8px dashed var(--ink); border-radius: 50%; }
+.class-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.class-row-label { margin-right: 6px; color: var(--ink-3); font-size: 12.5px; }
+.class-button { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 9px; background: var(--well); color: var(--ink-2); font-size: 13.5px; font-weight: 650; font-variant-numeric: tabular-nums; transition: background-color .2s, color .2s, box-shadow .2s; }
+.class-button:hover, .class-button.is-highlighted { background: var(--surface); color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--signal-positive); }
+.class-button:focus-visible { outline-offset: 2px; }
+.map-panel .callout-note { margin-top: 20px; }
+
+/* ---------- At the point ---------- */
+.decoded-main { display: grid; justify-items: center; gap: 12px; }
+.decoded-view { display: block; width: 100%; max-width: 236px; height: auto; aspect-ratio: 1; border-radius: var(--radius-inner); background: var(--stage); box-shadow: inset 0 0 0 1px var(--line-strong); image-rendering: pixelated; }
+.decoded-readouts { display: grid; justify-items: center; gap: 4px; min-width: 0; }
+.point-readout { display: flex; flex-wrap: wrap; gap: 2px 18px; margin: 0; color: var(--ink-3); font-family: var(--font-math); font-size: 15px; }
+.point-readout .readout { display: inline-block; min-width: 4.4ch; margin-left: 4px; color: var(--ink); font-family: var(--font-readout); font-size: 14px; font-weight: 600; text-align: right; }
+.looks-like { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin: 6px 0 0; color: var(--ink-2); font-size: 13.5px; }
+.looks-digit { min-width: .62em; color: var(--ink); font-size: 44px; font-weight: 720; line-height: 1; letter-spacing: -.03em; text-align: center; }
+.looks-sure { min-width: 7ch; }
+.looks-source { margin: 0; color: var(--ink-3); font-size: 12px; text-align: center; }
+.looks-source a { color: inherit; }
+.decoded-panel.no-reader .looks-like, .decoded-panel.no-reader .looks-source { display: none; }
+
+.morph-section { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.morph-intro { margin-top: 2px; color: var(--ink-3); font-size: 12.5px; line-height: 1.4; }
+.morph-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: 8px; margin-top: 12px; }
+.morph-controls .select select { font-size: 13.5px; }
+.morph-button { padding: 0 14px 0 12px; }
+.morph-button .icon { width: 15px; height: 15px; }
+.morph-button .stop-icon, .morph-button.is-running .play-icon { display: none; }
+.morph-button.is-running .stop-icon { display: inline-block; }
+.morph-strip { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin: 14px 0 0; padding: 0; list-style: none; }
+.morph-strip button { display: block; width: 100%; padding: 0; border: 0; border-radius: 8px; background: var(--stage); box-shadow: inset 0 0 0 1px var(--line); aspect-ratio: 1; overflow: hidden; transition: box-shadow .2s; }
+.morph-strip button:hover { box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+.morph-strip button[aria-current='step'] { box-shadow: inset 0 0 0 2px var(--ink); }
+.morph-strip button:focus-visible { outline-offset: 2px; }
+.morph-strip canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+.morph-section .callout-note { margin-top: 20px; }
+
+/* ---------- Scratchpad, as on the Digits page ---------- */
+.pad-frame { position: relative; width: 100%; max-width: 256px; aspect-ratio: 1; margin: 4px auto 0; border-radius: 18px; background-color: var(--stage); background-image: radial-gradient(var(--grid-dot) 1px, transparent 1.3px); background-size: calc(100% / 14) calc(100% / 14); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.draw-pad { display: block; width: 100%; height: 100%; border-radius: inherit; cursor: crosshair; touch-action: none; }
+.pad-hint { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; color: var(--ink-3); font-family: var(--font-math); font-size: 17px; font-style: italic; pointer-events: none; }
+.pad-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.drawing-readout { min-height: 3em; margin: 14px 0 0; color: var(--ink-2); font-size: 13px; line-height: 1.5; text-align: center; }
+.pixel-view { display: block; image-rendering: pixelated; }
+.pixel-views { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 14px; padding-top: 16px; border-top: 1px solid var(--line); }
+.pixel-views figure { display: flex; flex-direction: column; justify-content: space-between; }
+.pixel-views .pixel-view { width: 100%; max-width: 112px; height: auto; aspect-ratio: 1; border-radius: 10px; background: var(--stage); box-shadow: inset 0 0 0 1px var(--line); }
+
+.page-vae .guide-card h3 { margin-top: 0; }
+
+@media (max-width: 1240px) {
+  .vae-workbench { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: 'map map' 'decoded pad'; }
+  .map-frame { width: min(100%, max(320px, calc(100svh - 230px)), 760px); }
+}
+@media (max-width: 760px) {
+  .vae-workbench { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'map' 'decoded' 'pad'; gap: 14px; margin-top: 4px; }
+  .map-frame { width: 100%; }
+  .map-panel .panel-heading { padding-bottom: 8px; }
+  .map-footer { flex-direction: column; align-items: stretch; }
+  /* All ten digits on one row, sharing the width. */
+  .class-row { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 4px; }
+  .class-row-label { grid-column: 1 / -1; margin: 0 0 2px; }
+  .class-button { width: auto; height: 32px; }
+  /* The decoded digit beside its readouts, so it stays near the map while dragging. */
+  .decoded-main { grid-template-columns: minmax(0, 132px) minmax(0, 1fr); align-items: center; justify-items: start; gap: 16px; }
+  .decoded-readouts { justify-items: start; }
+  .looks-source { text-align: left; }
+}
+@media (max-width: 400px) {
+  .decoded-main { grid-template-columns: minmax(0, 104px) minmax(0, 1fr); gap: 12px; }
+  .looks-digit { font-size: 36px; }
+}
+@media (max-width: 370px) {
+  .class-button { height: 30px; border-radius: 8px; font-size: 13px; }
+  .morph-controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .morph-button { grid-column: 1 / -1; }
+}

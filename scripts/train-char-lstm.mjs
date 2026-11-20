@@ -1,15 +1,22 @@
 #!/usr/bin/env node
 /**
- * Trains the Recurrent page's character-level LSTM and exports its weights and metadata.
+ * Trains the Recurrent page's character-level LSTM, and the gateless network the page
+ * compares it with, and exports their weights and metadata.
  *
  * Usage:
  *   node scripts/train-char-lstm.mjs <corpus-dir> <output-dir> [options]
- *     --epochs N     training epochs (default 8)
- *     --seed N       PRNG seed (default 20261119)
- *     --workers N    worker threads (default: all cores); results do not depend on it
- *     --corpus-only  write the normalized training and held-out text to <output-dir>
- *                    (corpus-train.txt, corpus-held-out.txt) and stop
- *   node scripts/train-char-lstm.mjs --check-gradients
+ *     --cell C         lstm (default) or rnn, the gateless network
+ *     --hidden N       memory cells or hidden units (default 256 for lstm, 512 for rnn)
+ *     --output-name S  file name without extension (default char-lstm-v1, char-rnn-v1)
+ *     --epochs N       training epochs (default 8)
+ *     --seed N         PRNG seed (default 20261119)
+ *     --workers N      worker threads (default: all cores); results do not depend on it
+ *     --corpus-only    write the normalized training and held-out text to <output-dir>
+ *                      (corpus-train.txt, corpus-held-out.txt) and stop
+ *     --analyze        read the exported model in <output-dir> instead of training, and
+ *                      write its held-out reference statistics (see heldOutReference)
+ *                      into its .json; the .bin is only read
+ *   node scripts/train-char-lstm.mjs --check-gradients [--cell C]
  *     compares backpropagation through time with finite differences and exits
  *
  * <corpus-dir> must contain the nineteen Project Gutenberg plain-text books in BOOKS
@@ -38,6 +45,13 @@
  * The forget-gate bias starts at 1, recurrent weights start orthogonal per gate, and the
  * output bias starts at the log character frequencies.
  *
+ * The gateless network (--cell rnn) is an Elman RNN, h = tanh(W_x[x] + U·h + b), with
+ * the same readout. Its 512 hidden units give it 329,281 parameters, about as many as
+ * the LSTM's 346,433, so the comparison is between gates and no gates rather than
+ * between sizes. U starts orthogonal (RNN_RECURRENT_GAIN), the bias at 0. It is trained
+ * exactly like the LSTM below on the same text, split and schedule, except for a peak
+ * learning rate of 1e-3 (CELLS.rnn).
+ *
  * Training: truncated backpropagation through time over 100 steps on 40 parallel
  * streams through the training text. Each stream carries its memory from one window to
  * the next, but starts again from zero with probability 0.1 per window (and at every
@@ -50,12 +64,19 @@
  * own buffer and are summed in a fixed order, so a given seed reproduces the exact same
  * weights whatever the worker count. The shipped model (8 epochs, the default) took
  * 105 minutes on a 10-core M4 and scores 1.77 bits per character on the held-out text.
+ * The gateless network (--cell rnn, also 8 epochs) took 100 minutes with 6 workers on
+ * the same machine, shared with other jobs, and scores 1.85; one of its 10,240 updates
+ * reached the gradient clip. --analyze adds the held-out reference statistics to an
+ * exported model without retraining it, as was done for the shipped LSTM.
  *
- * The forward pass (lstmCell, readout, softmaxInto, bitsPerCharacter) is imported from
- * src/rnn/model.ts (Node strips its types), so training, the reported validation score
- * and the browser all run the same code. Writes to <output-dir>:
+ * The forward pass (lstmCell, rnnCell, readout, softmaxInto, bitsPerCharacter) is
+ * imported from src/rnn/model.ts (Node strips its types), so training, the reported
+ * validation score and the browser all run the same code; so are the memory-span
+ * measures the reference statistics use. Writes to <output-dir>:
  *   char-lstm-v1.bin   little-endian float32 parameters, layout in src/rnn/model.ts
- *   char-lstm-v1.json  vocabulary, sizes, tensor layout, gate order, corpus, scores
+ *   char-lstm-v1.json  vocabulary, sizes, tensor layout, gate order, corpus, scores,
+ *                      notable cells and held-out reference statistics
+ * (char-rnn-v1.bin and .json for the gateless network, without the gate order).
  */
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -63,8 +84,9 @@ import { createHash } from 'node:crypto';
 import { availableParallelism } from 'node:os';
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import {
-  CharLstmRun, GATE_ORDER, MODEL_FORMAT, bitsPerCharacter, lstmCell, parameterCount, parseCharLstm,
-  readout, simplifyCharacters, softmaxInto, tensorLayout,
+  CharLstmRun, CharRnnRun, GATE_ORDER, MODEL_FORMAT, RNN_FORMAT, addInfluenceShares, bitsPerCharacter, guessScores, lstmCell,
+  parameterCount, parseCharLstm, parseCharRnn, readout, rnnBitsPerCharacter, rnnCell, rnnParameterCount, rnnTensorLayout,
+  simplifyCharacters, softmaxInto, spanReach, tensorLayout,
 } from '../src/rnn/model.ts';
 
 // ---------------------------------------------------------------------------------
@@ -107,17 +129,37 @@ const VALIDATION_SHARE = 0.05;
 // Model and training configuration
 // ---------------------------------------------------------------------------------
 
-const HIDDEN = 256;
 const STEPS = 100; // truncated BPTT window
 const STREAMS = 40; // sequences per update, one gradient buffer each (a multiple of the 10 cores)
 const RESET_PROBABILITY = 0.1;
-const LEARNING_RATE = 2e-3;
 const FINAL_LEARNING_RATE = 5e-5;
 const WARMUP_STEPS = 150;
 const CLIP_NORM = 1;
 const ADAM = { beta1: 0.9, beta2: 0.999, epsilon: 1e-8 };
 const REDUCE_CHUNK = 4096; // parameters per reduction task
-const DEFAULTS = { epochs: 8, seed: 20261119, workers: availableParallelism() };
+const DEFAULTS = { cell: 'lstm', epochs: 8, seed: 20261119, workers: availableParallelism() };
+/** The gateless network's recurrent matrix starts orthogonal, scaled by this: every direction of its memory is kept at first, none amplified. */
+const RNN_RECURRENT_GAIN = 1;
+/** The held-out reference statistics trace this many guesses this many characters back, as the page's memory span does. */
+const REFERENCE = { guesses: 2000, reach: 200 };
+
+/**
+ * The two networks: the page's LSTM, and the gateless network it is compared with.
+ * Everything else about training is shared.
+ */
+const CELLS = {
+  lstm: {
+    label: 'LSTM', hidden: 256, learningRate: 2e-3, outputName: 'char-lstm-v1', format: MODEL_FORMAT,
+    layout: tensorLayout, parameterCount, parse: parseCharLstm, Run: CharLstmRun, bitsPerCharacter,
+    createTrainer: createSequenceTrainer, initialize, unit: 'Cell', memory: run => run.cells,
+  },
+  rnn: {
+    label: 'Gateless RNN', hidden: 512, learningRate: 1e-3, outputName: 'char-rnn-v1', format: RNN_FORMAT,
+    layout: rnnTensorLayout, parameterCount: rnnParameterCount, parse: parseCharRnn, Run: CharRnnRun,
+    bitsPerCharacter: rnnBitsPerCharacter, createTrainer: createRnnSequenceTrainer, initialize: initializeRnn,
+    unit: 'Unit', memory: run => run.hidden,
+  },
+};
 
 // Shared control block used to run phases on the workers.
 const CTRL = { generation: 0, command: 1, tasks: 2, next: 3, done: 4, failed: 5, length: 8 };
@@ -144,11 +186,11 @@ function gaussian(random) {
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
-/** A CharLstm (see src/rnn/model.ts) whose tensors are views into one flat parameter array. */
-function modelViews(params, vocabulary, hidden) {
+/** A CharLstm or CharRnn (see src/rnn/model.ts) whose tensors are views into one flat parameter array. */
+function modelViews(params, vocabulary, hidden, layout = tensorLayout) {
   const inputSize = vocabulary.length;
   const model = { vocabulary, lookup: new Map(vocabulary.map((c, i) => [c, i])), inputSize, hiddenSize: hidden };
-  for (const { name, shape, offset } of tensorLayout(inputSize, hidden)) {
+  for (const { name, shape, offset } of layout(inputSize, hidden)) {
     model[name] = params.subarray(offset, offset + shape.reduce((a, b) => a * b, 1));
   }
   return model;
@@ -250,11 +292,161 @@ function createSequenceTrainer(model, steps) {
   return { run, finalH: hs.subarray(steps * H), finalC: cs.subarray(steps * H) };
 }
 
+/** out[r] = Σ_j matrix[r][j] · vector[j] for a [rows][columns] matrix, four rows at a time so each vector value is read once. */
+function multiplyRows(matrix, rows, columns, vector, out) {
+  let r = 0;
+  for (; r + 3 < rows; r += 4) {
+    const r0 = r * columns;
+    const r1 = r0 + columns;
+    const r2 = r1 + columns;
+    const r3 = r2 + columns;
+    let s0 = 0;
+    let s1 = 0;
+    let s2 = 0;
+    let s3 = 0;
+    for (let j = 0; j < columns; j++) {
+      const x = vector[j];
+      s0 += matrix[r0 + j] * x;
+      s1 += matrix[r1 + j] * x;
+      s2 += matrix[r2 + j] * x;
+      s3 += matrix[r3 + j] * x;
+    }
+    out[r] = s0;
+    out[r + 1] = s1;
+    out[r + 2] = s2;
+    out[r + 3] = s3;
+  }
+  for (; r < rows; r++) {
+    const row = r * columns;
+    let s = 0;
+    for (let j = 0; j < columns; j++) s += matrix[row + j] * vector[j];
+    out[r] = s;
+  }
+}
+
+/**
+ * grads[offset + r·columns + c] += Σ_{t < steps} a[r·steps + t] · b[c·stride + shift + t]:
+ * a window's weight gradient as one matrix product of per-step values stored unit by
+ * unit, four rows at a time, rather than as an outer product added at every step.
+ */
+function addProducts(grads, offset, a, rows, b, columns, stride, shift, steps) {
+  let r = 0;
+  for (; r + 3 < rows; r += 4) {
+    const a0 = r * steps;
+    const a1 = a0 + steps;
+    const a2 = a1 + steps;
+    const a3 = a2 + steps;
+    const g = offset + r * columns;
+    for (let c = 0; c < columns; c++) {
+      const base = c * stride + shift;
+      let s0 = 0;
+      let s1 = 0;
+      let s2 = 0;
+      let s3 = 0;
+      for (let t = 0; t < steps; t++) {
+        const x = b[base + t];
+        s0 += a[a0 + t] * x;
+        s1 += a[a1 + t] * x;
+        s2 += a[a2 + t] * x;
+        s3 += a[a3 + t] * x;
+      }
+      grads[g + c] += s0;
+      grads[g + columns + c] += s1;
+      grads[g + 2 * columns + c] += s2;
+      grads[g + 3 * columns + c] += s3;
+    }
+  }
+  for (; r < rows; r++) {
+    const a0 = r * steps;
+    const g = offset + r * columns;
+    for (let c = 0; c < columns; c++) {
+      const base = c * stride + shift;
+      let s0 = 0;
+      for (let t = 0; t < steps; t++) s0 += a[a0 + t] * b[base + t];
+      grads[g + c] += s0;
+    }
+  }
+}
+
+/**
+ * The gateless network's counterpart of createSequenceTrainer: `run(text, start, h0,
+ * grads)` reads text[start .. start + steps − 1], predicts text[start + 1 .. start +
+ * steps], adds d(total loss in nats)/d(parameter) to `grads`, leaves the final state in
+ * `finalH` and returns the total loss in nats. Backpropagation reads a transposed copy
+ * of U, so call `prepare()` whenever the parameters change.
+ */
+function createRnnSequenceTrainer(model, steps) {
+  const H = model.hiddenSize;
+  const V = model.inputSize;
+  const layout = Object.fromEntries(rnnTensorLayout(V, H).map(entry => [entry.name, entry.offset]));
+  const { inputWeights: Wx, recurrentWeights: U, outputWeights: Wy } = model;
+  const transposedU = new Float32Array(H * H);
+  const hs = new Float32Array((steps + 1) * H); // hs[0] = h0, hs[t + 1] = h after step t
+  const statesByUnit = new Float64Array(H * (steps + 1)); // the same, [unit][step]
+  const logits = new Float32Array(V);
+  const probs = new Float32Array(steps * V);
+  const dh = new Float64Array(H);
+  const dz = new Float64Array(H);
+  const dzByUnit = new Float64Array(H * steps); // d loss / d pre-activation, [unit][step]
+  const dyByCharacter = new Float64Array(V * steps); // d loss / d logits, [character][step]
+
+  function prepare() {
+    for (let j = 0; j < H; j++) for (let k = 0; k < H; k++) transposedU[k * H + j] = U[j * H + k];
+  }
+
+  function run(text, start, h0, grads) {
+    hs.set(h0, 0);
+    let loss = 0;
+    for (let t = 0; t < steps; t++) {
+      rnnCell(model, Wx, text[start + t] * H, hs, t * H, hs, (t + 1) * H);
+      readout(model, hs, (t + 1) * H, logits, 0);
+      loss += softmaxInto(logits, 0, V, probs, t * V) - logits[text[start + t + 1]];
+    }
+    for (let k = 0; k < H; k++) for (let t = 0; t <= steps; t++) statesByUnit[k * (steps + 1) + t] = hs[t * H + k];
+
+    const gWx = layout.inputWeights;
+    const gB = layout.bias;
+    const gBy = layout.outputBias;
+    dh.fill(0);
+    for (let t = steps - 1; t >= 0; t--) {
+      // dh holds what reaches h_t from later steps; add the readout's share:
+      // softmax with cross-entropy, d loss / d logits = p − onehot(target).
+      const target = text[start + t + 1];
+      for (let v = 0; v < V; v++) {
+        const d = probs[t * V + v] - (v === target ? 1 : 0);
+        dyByCharacter[v * steps + t] = d;
+        grads[gBy + v] += d;
+        const row = v * H;
+        for (let k = 0; k < H; k++) dh[k] += d * Wy[row + k];
+      }
+      // Through h = tanh(z) to the pre-activation, whose input part is row x_t of W_x.
+      const hOffset = (t + 1) * H;
+      const inputRow = gWx + text[start + t] * H;
+      for (let k = 0; k < H; k++) {
+        const h = hs[hOffset + k];
+        const d = dh[k] * (1 - h * h);
+        dz[k] = d;
+        dzByUnit[k * steps + t] = d;
+        grads[inputRow + k] += d;
+        grads[gB + k] += d;
+      }
+      if (t > 0) multiplyRows(transposedU, H, H, dz, dh); // d loss / d h_{t−1} = Uᵀ dz
+    }
+    // d U[j][k] = Σ_t dz_t[j] h_{t−1}[k] and d W_y[v][k] = Σ_t dy_t[v] h_t[k].
+    addProducts(grads, layout.recurrentWeights, dzByUnit, H, statesByUnit, H, steps + 1, 0, steps);
+    addProducts(grads, layout.outputWeights, dyByCharacter, V, statesByUnit, H, steps + 1, 1, steps);
+    return loss;
+  }
+
+  return { run, prepare, finalH: hs.subarray(steps * H) };
+}
+
 // ---------------------------------------------------------------------------------
 // Worker: trains streams, sums gradients, evaluates
 // ---------------------------------------------------------------------------------
 
-function workerMain({ shared, vocabulary, workerCount }) {
+function workerMain({ shared, vocabulary, workerCount, cellName, hidden }) {
+  const cell = CELLS[cellName];
   const control = new Int32Array(shared.control);
   const params = new Float32Array(shared.params);
   const grads = new Float32Array(shared.grads);
@@ -267,10 +459,10 @@ function workerMain({ shared, vocabulary, workerCount }) {
   const validation = new Uint8Array(shared.validation);
   const validationBounds = new Int32Array(shared.validationBounds);
   const evalStats = new Float64Array(shared.evalStats);
-  const model = modelViews(params, vocabulary, HIDDEN);
+  const model = modelViews(params, vocabulary, hidden, cell.layout);
   const PARAMS = params.length;
-  const H = HIDDEN;
-  const trainer = createSequenceTrainer(model, STEPS);
+  const H = hidden;
+  const trainer = cell.createTrainer(model, STEPS);
   const zeros = new Float32Array(H);
 
   function trainStream(s) {
@@ -279,9 +471,14 @@ function workerMain({ shared, vocabulary, workerCount }) {
     const memory = state.subarray(s * 2 * H, (s + 1) * 2 * H);
     const streamGrads = grads.subarray(s * PARAMS, (s + 1) * PARAMS);
     streamGrads.fill(0);
-    losses[s] = trainer.run(text, start, reset ? zeros : memory.subarray(0, H), reset ? zeros : memory.subarray(H), streamGrads);
-    memory.set(trainer.finalH, 0);
-    memory.set(trainer.finalC, H);
+    if (cell === CELLS.lstm) {
+      losses[s] = trainer.run(text, start, reset ? zeros : memory.subarray(0, H), reset ? zeros : memory.subarray(H), streamGrads);
+      memory.set(trainer.finalH, 0);
+      memory.set(trainer.finalC, H);
+    } else {
+      losses[s] = trainer.run(text, start, reset ? zeros : memory.subarray(0, H), streamGrads);
+      memory.set(trainer.finalH, 0);
+    }
   }
 
   function reduceChunk(chunk) {
@@ -298,7 +495,7 @@ function workerMain({ shared, vocabulary, workerCount }) {
   }
 
   function evaluateStream(index) {
-    const { bits, count } = bitsPerCharacter(model, validation.subarray(validationBounds[index], validationBounds[index + 1]));
+    const { bits, count } = cell.bitsPerCharacter(model, validation.subarray(validationBounds[index], validationBounds[index + 1]));
     evalStats[2 * index] = bits * count;
     evalStats[2 * index + 1] = count;
   }
@@ -311,6 +508,7 @@ function workerMain({ shared, vocabulary, workerCount }) {
     if (command === COMMAND.exit) break;
     try {
       const tasks = Atomics.load(control, CTRL.tasks);
+      if (command === COMMAND.train) trainer.prepare?.(); // the parameters changed since the last phase
       for (let task = Atomics.add(control, CTRL.next, 1); task < tasks; task = Atomics.add(control, CTRL.next, 1)) {
         if (command === COMMAND.train) trainStream(task);
         else if (command === COMMAND.reduce) reduceChunk(task);
@@ -330,12 +528,19 @@ function workerMain({ shared, vocabulary, workerCount }) {
 
 function parseArguments(argv) {
   const positional = [];
-  const options = { ...DEFAULTS, checkGradients: false, corpusOnly: false };
+  const options = { ...DEFAULTS, checkGradients: false, corpusOnly: false, analyze: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--check-gradients') options.checkGradients = true;
     else if (arg === '--corpus-only') options.corpusOnly = true;
-    else if (['--epochs', '--seed', '--workers'].includes(arg)) {
+    else if (arg === '--analyze') options.analyze = true;
+    else if (arg === '--cell') {
+      options.cell = argv[++i];
+      if (!Object.hasOwn(CELLS, options.cell)) throw new Error(`--cell needs one of ${Object.keys(CELLS).join(', ')}`);
+    } else if (arg === '--output-name') {
+      options.outputName = argv[++i];
+      if (!/^[\w.-]+$/.test(options.outputName ?? '')) throw new Error('--output-name needs a plain file name without an extension');
+    } else if (['--epochs', '--seed', '--workers', '--hidden'].includes(arg)) {
       const value = Number(argv[++i]);
       if (!Number.isInteger(value) || value < 0) throw new Error(`${arg} needs a non-negative integer`);
       options[arg.slice(2)] = value;
@@ -345,6 +550,8 @@ function parseArguments(argv) {
   [options.corpusDir, options.outDir] = positional;
   options.workers = Math.max(1, options.workers);
   options.epochs = Math.max(1, options.epochs);
+  options.hidden = Math.max(1, options.hidden ?? CELLS[options.cell].hidden);
+  options.outputName ??= CELLS[options.cell].outputName;
   return options;
 }
 
@@ -422,32 +629,53 @@ const encode = (text, lookup) => Uint8Array.from(text, c => lookup.get(c));
 // Main thread: training
 // ---------------------------------------------------------------------------------
 
-/** Orthogonal recurrent blocks, small random input and output weights, forget bias 1, output bias log-frequencies. */
-function initialize(params, model, trainIndices, random) {
+/** Modified Gram–Schmidt on a Gaussian matrix: the rows of a random orthogonal H×H matrix. */
+function orthogonalRows(H, random) {
+  const rows = Array.from({ length: H }, () => Float64Array.from({ length: H }, () => gaussian(random)));
+  for (let r = 0; r < H; r++) {
+    for (let q = 0; q < r; q++) {
+      let dot = 0;
+      for (let k = 0; k < H; k++) dot += rows[r][k] * rows[q][k];
+      for (let k = 0; k < H; k++) rows[r][k] -= dot * rows[q][k];
+    }
+    const norm = Math.hypot(...rows[r]);
+    for (let k = 0; k < H; k++) rows[r][k] /= norm;
+  }
+  return rows;
+}
+
+/** Small random output weights and output biases at the log character frequencies, for both networks. */
+function initializeReadout(params, model, trainIndices, random) {
   const H = model.hiddenSize;
   const V = model.inputSize;
-  for (let i = 0; i < model.inputWeights.length; i++) model.inputWeights[i] = 0.3 * gaussian(random);
-  for (let gate = 0; gate < 4; gate++) {
-    // Modified Gram–Schmidt on a Gaussian matrix gives a random orthogonal H×H block.
-    const rows = Array.from({ length: H }, () => Float64Array.from({ length: H }, () => gaussian(random)));
-    for (let r = 0; r < H; r++) {
-      for (let q = 0; q < r; q++) {
-        let dot = 0;
-        for (let k = 0; k < H; k++) dot += rows[r][k] * rows[q][k];
-        for (let k = 0; k < H; k++) rows[r][k] -= dot * rows[q][k];
-      }
-      const norm = Math.hypot(...rows[r]);
-      for (let k = 0; k < H; k++) rows[r][k] /= norm;
-    }
-    for (let r = 0; r < H; r++) model.recurrentWeights.set(rows[r], (gate * H + r) * H);
-  }
-  model.bias.fill(0);
-  model.bias.fill(1, H, 2 * H); // forget gate
   for (let i = 0; i < model.outputWeights.length; i++) model.outputWeights[i] = gaussian(random) / Math.sqrt(H);
   const frequency = new Float64Array(V).fill(1);
   for (const index of trainIndices) frequency[index]++;
   for (let v = 0; v < V; v++) model.outputBias[v] = Math.log(frequency[v] / (trainIndices.length + V));
   if (params.some(value => !Number.isFinite(value))) throw new Error('Initialization produced a non-finite value');
+}
+
+/** Orthogonal recurrent blocks, small random input and output weights, forget bias 1, output bias log-frequencies. */
+function initialize(params, model, trainIndices, random) {
+  const H = model.hiddenSize;
+  for (let i = 0; i < model.inputWeights.length; i++) model.inputWeights[i] = 0.3 * gaussian(random);
+  for (let gate = 0; gate < 4; gate++) {
+    const rows = orthogonalRows(H, random);
+    for (let r = 0; r < H; r++) model.recurrentWeights.set(rows[r], (gate * H + r) * H);
+  }
+  model.bias.fill(0);
+  model.bias.fill(1, H, 2 * H); // forget gate
+  initializeReadout(params, model, trainIndices, random);
+}
+
+/** The gateless network: the same input and output weights, an orthogonal U scaled by RNN_RECURRENT_GAIN, bias 0. */
+function initializeRnn(params, model, trainIndices, random) {
+  const H = model.hiddenSize;
+  for (let i = 0; i < model.inputWeights.length; i++) model.inputWeights[i] = 0.3 * gaussian(random);
+  const rows = orthogonalRows(H, random);
+  for (let r = 0; r < H; r++) for (let k = 0; k < H; k++) model.recurrentWeights[r * H + k] = RNN_RECURRENT_GAIN * rows[r][k];
+  model.bias.fill(0);
+  initializeReadout(params, model, trainIndices, random);
 }
 
 function sharedBytes(bytes) {
@@ -458,10 +686,12 @@ function sharedBytes(bytes) {
 
 async function train(options) {
   const startTime = performance.now();
+  const cell = CELLS[options.cell];
+  const HIDDEN = options.hidden;
   const { books, vocabulary, removed } = loadCorpus(options.corpusDir);
   const lookup = new Map(vocabulary.map((c, i) => [c, i]));
   const V = vocabulary.length;
-  const PARAMS = parameterCount(V, HIDDEN);
+  const PARAMS = cell.parameterCount(V, HIDDEN);
   const trainText = books.map(book => book.train).join('\n');
   const trainIndices = encode(trainText, lookup);
   const validationIndices = books.map(book => encode(book.validation, lookup));
@@ -503,17 +733,17 @@ async function train(options) {
   const streams = new Int32Array(shared.streams);
   const losses = new Float64Array(shared.losses);
   const evalStats = new Float64Array(shared.evalStats);
-  const model = modelViews(params, vocabulary, HIDDEN);
+  const model = modelViews(params, vocabulary, HIDDEN, cell.layout);
 
   const random = mulberry32(options.seed);
-  initialize(params, model, trainIndices, random);
+  cell.initialize(params, model, trainIndices, random);
   const adamM = new Float64Array(PARAMS);
   const adamV = new Float64Array(PARAMS);
 
   const workerCount = options.workers;
   const workerErrors = [];
   const workers = Array.from({ length: workerCount }, () => {
-    const worker = new Worker(new URL(import.meta.url), { workerData: { shared, vocabulary, workerCount } });
+    const worker = new Worker(new URL(import.meta.url), { workerData: { shared, vocabulary, workerCount, cellName: options.cell, hidden: HIDDEN } });
     worker.on('message', message => workerErrors.push(message));
     worker.on('error', error => workerErrors.push(String(error?.stack ?? error)));
     return worker;
@@ -556,10 +786,10 @@ async function train(options) {
   const windowsPerEpoch = Math.floor((Math.floor((N - STEPS) / STREAMS) - 1) / STEPS);
   const totalSteps = options.epochs * windowsPerEpoch;
   const learningRate = step => Math.min(1, step / WARMUP_STEPS)
-    * (FINAL_LEARNING_RATE + 0.5 * (LEARNING_RATE - FINAL_LEARNING_RATE) * (1 + Math.cos(Math.PI * Math.min(1, step / totalSteps))));
+    * (FINAL_LEARNING_RATE + 0.5 * (cell.learningRate - FINAL_LEARNING_RATE) * (1 + Math.cos(Math.PI * Math.min(1, step / totalSteps))));
   const chunks = Math.ceil(PARAMS / REDUCE_CHUNK);
 
-  console.log(`LSTM ${HIDDEN} cells, ${PARAMS.toLocaleString()} parameters; ${N.toLocaleString()} training characters, `
+  console.log(`${cell.label} ${HIDDEN} ${cell === CELLS.lstm ? 'cells' : 'units'}, ${PARAMS.toLocaleString()} parameters; ${N.toLocaleString()} training characters, `
     + `${options.epochs} epochs of ${windowsPerEpoch} updates (${STREAMS} streams × ${STEPS} steps), seed ${options.seed}, ${workerCount} workers`);
   let step = 0;
   let best = { bits: Infinity, epoch: 0, params: null };
@@ -578,6 +808,7 @@ async function train(options) {
         if (w > 0 && w % progressEvery === 0) {
           const elapsed = (performance.now() - epochStart) / 1000;
           console.log(`  epoch ${epoch}: ${w}/${windows} updates, train ${(loss / (w * STREAMS * STEPS) / Math.LN2).toFixed(3)} bits/char, `
+            + `grad norm ${(normSum / w).toFixed(3)} (clipped ${clipped}), lr ${learningRate(step).toExponential(2)}, `
             + `${(w * STREAMS * STEPS / elapsed).toFixed(0)} characters/s, about ${((windows - w) * elapsed / w / 60).toFixed(1)} min left in this epoch`);
         }
         for (let s = 0; s < STREAMS; s++) {
@@ -621,7 +852,7 @@ async function train(options) {
     await Promise.all(workers.map(worker => worker.terminate()));
   }
   const seconds = (performance.now() - startTime) / 1000;
-  exportModel(options, { books, vocabulary, validationIndices, trainIndices }, best, history, seconds);
+  exportModel(options, cell, { books, vocabulary, validationIndices, trainIndices }, best, history, seconds);
 }
 
 // ---------------------------------------------------------------------------------
@@ -693,15 +924,22 @@ const FEATURE_NAMES = {
   paragraph: 'characters into the paragraph',
 };
 
-/** For each feature, the memory cell whose state follows it most closely on the held-out text. */
-function notableCells(model, texts) {
+/**
+ * For each feature, the memory cell (the LSTM's cell state c, the gateless network's
+ * hidden state h) whose state follows it most closely on the held-out text.
+ */
+function notableCells(cell, model, texts) {
   const H = model.hiddenSize;
-  const cells = Array.from({ length: H }, () => []);
+  const total = texts.reduce((n, text) => n + text.length, 0);
+  const states = Array.from({ length: H }, () => new Float32Array(total));
   const all = { quote: [], parenthesis: [], word: [], paragraph: [] };
+  let at = 0;
   for (const text of texts) {
-    const run = new CharLstmRun(model);
+    const run = new cell.Run(model);
     run.setIndices(Array.from(text, c => model.lookup.get(c)));
-    for (let t = 0; t < run.length; t++) for (let k = 0; k < H; k++) cells[k].push(run.cells[t * H + k]);
+    const memory = cell.memory(run);
+    for (let t = 0; t < run.length; t++) for (let k = 0; k < H; k++) states[k][at + t] = memory[t * H + k];
+    at += run.length;
     const features = textFeatures(text);
     for (const name of Object.keys(all)) all[name].push(...features[name]);
   }
@@ -709,7 +947,7 @@ function notableCells(model, texts) {
     let bestCell = 0;
     let bestR = 0;
     for (let k = 0; k < H; k++) {
-      const r = correlation(cells[k], values);
+      const r = correlation(states[k], values);
       if (Math.abs(r) > Math.abs(bestR)) { bestR = r; bestCell = k; }
     }
     return { feature: name, description: FEATURE_NAMES[name], cell: bestCell, correlation: +bestR.toFixed(3) };
@@ -717,8 +955,8 @@ function notableCells(model, texts) {
 }
 
 /** Greedy or sampled continuation, for a look at what the model writes. */
-function continueText(model, prompt, length, temperature, random) {
-  const run = new CharLstmRun(model);
+function continueText(cell, model, prompt, length, temperature, random) {
+  const run = new cell.Run(model);
   const indices = Array.from(prompt, c => model.lookup.get(c));
   run.setIndices(indices);
   const V = model.inputSize;
@@ -741,37 +979,107 @@ function continueText(model, prompt, length, temperature, random) {
   return out;
 }
 
+/**
+ * What the page compares the two networks with, measured on the held-out text (each
+ * book's last 5%, read from a blank memory) with src/rnn/model.ts: how often the
+ * likeliest next character, or one of the three likeliest, was right, over every
+ * held-out character; and the memory span of REFERENCE.guesses evenly spaced guesses,
+ * each with at least REFERENCE.reach characters before it in its book, traced that far
+ * back from its likeliest next character as the page's span view does: the medians of
+ * how many of the latest characters hold half and 90% of a guess's pull (spanReach),
+ * and the average share of the pull from each distance (addInfluenceShares). Also
+ * returns the bits per character the same runs cost, to check the text is the trainer's.
+ */
+function heldOutReference(cell, model, texts) {
+  const { reach } = REFERENCE;
+  const eligible = texts.reduce((n, text) => n + Math.max(0, text.length - reach), 0);
+  const stride = Math.max(1, Math.floor(eligible / REFERENCE.guesses));
+  const byDistance = new Float64Array(reach);
+  const halves = [];
+  const nineties = [];
+  const score = { guesses: 0, first: 0, three: 0 };
+  let bits = 0;
+  for (const text of texts) {
+    const run = new cell.Run(model);
+    run.setIndices(Array.from(text, c => model.lookup.get(c)));
+    const scores = guessScores(run);
+    score.guesses += scores.guesses;
+    score.first += scores.first;
+    score.three += scores.three;
+    for (let t = 1; t < run.length; t++) bits += run.surprisal(t);
+    for (let t = reach - 1; t + 1 < run.length; t += stride) {
+      const values = run.influence(t, run.topCharacter(t), reach);
+      if (!addInfluenceShares(values, t, byDistance)) continue;
+      halves.push(spanReach(values, t, .5));
+      nineties.push(spanReach(values, t, .9));
+    }
+  }
+  const median = values => values.sort((a, b) => a - b)[Math.floor((values.length - 1) / 2)];
+  const traced = halves.length;
+  return {
+    bits: bits / score.guesses,
+    reference: {
+      note: `Measured on the held-out text (the last 5% of each book, read from a blank memory) with the shipped weights. `
+        + `Accuracy covers every held-out character; the memory span covers ${traced} evenly spaced guesses with at least ${reach} characters `
+        + `before them, each traced ${reach} characters back from its likeliest next character, as the page's span view does.`,
+      accuracy: {
+        guesses: score.guesses,
+        firstGuess: +(score.first / score.guesses).toFixed(4),
+        topThree: +(score.three / score.guesses).toFixed(4),
+      },
+      memorySpan: {
+        guesses: traced,
+        reach,
+        halfReach: median(halves),
+        ninetyReach: median(nineties),
+        byDistance: Array.from(byDistance, share => +(share / traced).toPrecision(4)),
+      },
+    },
+  };
+}
+
+function logReference(cell, { accuracy, memorySpan }) {
+  const percent = share => `${(share * 100).toFixed(1)}%`;
+  const characters = count => (count === 1 ? 'character' : `${count} characters`);
+  const near = memorySpan.byDistance.findIndex(share => share < 1e-3) + 1;
+  console.log(`${cell.label} on held-out text: first guess right ${percent(accuracy.firstGuess)}, within three ${percent(accuracy.topThree)}; `
+    + `half of a guess's pull from the last ${characters(memorySpan.halfReach)}, 90% from the last ${characters(memorySpan.ninetyReach)} `
+    + `(medians of ${memorySpan.guesses} guesses); each character's share falls below 0.1% ${near > 0 ? `${near} characters back` : `beyond ${memorySpan.reach}`}`);
+}
+
 /** Writes the binary and metadata, then re-reads them and measures held-out bits per character with model.ts. */
-function exportModel(options, corpus, best, history, trainSeconds) {
+function exportModel(options, cell, corpus, best, history, trainSeconds) {
   const { books, vocabulary, validationIndices } = corpus;
   const V = vocabulary.length;
+  const H = options.hidden;
   mkdirSync(options.outDir, { recursive: true });
-  const weightsPath = join(options.outDir, 'char-lstm-v1.bin');
-  const metaPath = join(options.outDir, 'char-lstm-v1.json');
+  const weightsPath = join(options.outDir, `${options.outputName}.bin`);
+  const metaPath = join(options.outDir, `${options.outputName}.json`);
   writeFileSync(weightsPath, encodeWeights(best.params));
 
   const draft = {
-    format: MODEL_FORMAT,
+    format: cell.format,
     vocabulary: vocabulary.join(''),
     inputSize: V,
-    hiddenSize: HIDDEN,
-    gateOrder: [...GATE_ORDER],
-    parameters: parameterCount(V, HIDDEN),
-    tensors: tensorLayout(V, HIDDEN),
+    hiddenSize: H,
+    ...(cell === CELLS.lstm ? { gateOrder: [...GATE_ORDER] } : {}),
+    parameters: cell.parameterCount(V, H),
+    tensors: cell.layout(V, H),
     corpus: books.map(({ title, author, gutenbergId }) => ({ title, author, gutenbergId })),
     validationBitsPerChar: 0,
   };
-  const model = parseCharLstm(draft, toArrayBuffer(readFileSync(weightsPath)));
+  const model = cell.parse(draft, toArrayBuffer(readFileSync(weightsPath)));
   let bits = 0;
   let count = 0;
   const perBook = books.map((book, b) => {
-    const score = bitsPerCharacter(model, validationIndices[b]);
+    const score = cell.bitsPerCharacter(model, validationIndices[b]);
     bits += score.bits * score.count;
     count += score.count;
     return { title: book.title, bitsPerChar: +score.bits.toFixed(4), characters: score.count + 1 };
   });
   const validationBits = bits / count;
-  const cells = notableCells(model, books.map(book => book.validation));
+  const cells = notableCells(cell, model, books.map(book => book.validation));
+  const { reference } = heldOutReference(cell, model, books.map(book => book.validation));
   const meta = {
     ...draft,
     validationBitsPerChar: +validationBits.toFixed(4),
@@ -783,56 +1091,85 @@ function exportModel(options, corpus, best, history, trainSeconds) {
       streams: STREAMS,
       steps: STEPS,
       resetProbability: RESET_PROBABILITY,
-      learningRate: LEARNING_RATE,
+      learningRate: cell.learningRate,
       finalLearningRate: FINAL_LEARNING_RATE,
       clipNorm: CLIP_NORM,
+      ...(cell === CELLS.rnn ? { warmupSteps: WARMUP_STEPS, recurrentInitialization: `orthogonal, gain ${RNN_RECURRENT_GAIN}` } : {}),
       seed: options.seed,
       seconds: Math.round(trainSeconds),
       history,
     },
     sources: books.map(({ gutenbergId, sha256 }) => ({ gutenbergId, sha256 })),
     notableCells: cells,
+    reference,
   };
   writeFileSync(metaPath, `${JSON.stringify(meta, null, 2)}\n`);
   // The page parses exactly what was written.
-  parseCharLstm(JSON.parse(readFileSync(metaPath, 'utf8')), toArrayBuffer(readFileSync(weightsPath)));
+  cell.parse(JSON.parse(readFileSync(metaPath, 'utf8')), toArrayBuffer(readFileSync(weightsPath)));
 
   console.log(`\nHeld-out bits per character (model.ts on the exported file): ${validationBits.toFixed(4)} `
     + `(${perBook.map(book => `${book.title} ${book.bitsPerChar.toFixed(3)}`).join(', ')}); best epoch ${best.epoch}`);
-  for (const cell of cells) console.log(`Cell ${cell.cell + 1} follows "${cell.description}" (r = ${cell.correlation})`);
+  for (const notable of cells) console.log(`${cell.unit} ${notable.cell + 1} follows "${notable.description}" (r = ${notable.correlation})`);
+  logReference(cell, reference);
   const random = mulberry32(options.seed + 1);
   for (const prompt of ['Alice was beginning to', '"Where are you going?" asked the', 'Peter']) {
-    console.log(`\nGreedy: ${JSON.stringify(continueText(model, prompt, 120, 0, random))}`);
-    console.log(`T=0.8:  ${JSON.stringify(continueText(model, prompt, 120, 0.8, random))}`);
+    console.log(`\nGreedy: ${JSON.stringify(continueText(cell, model, prompt, 120, 0, random))}`);
+    console.log(`T=0.8:  ${JSON.stringify(continueText(cell, model, prompt, 120, 0.8, random))}`);
   }
   console.log(`\nWrote ${weightsPath} (${statSync(weightsPath).size} bytes) and ${metaPath}`);
   console.log(`Training time ${trainSeconds.toFixed(0)} s.`);
+}
+
+/**
+ * --analyze: adds the held-out reference statistics to an exported model's metadata.
+ * The weights are only read, and the held-out score they give must match the recorded one.
+ */
+function analyze(options) {
+  const startTime = performance.now();
+  const cell = CELLS[options.cell];
+  const metaPath = join(options.outDir, `${options.outputName}.json`);
+  const weightsPath = join(options.outDir, `${options.outputName}.bin`);
+  const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
+  const model = cell.parse(meta, toArrayBuffer(readFileSync(weightsPath)));
+  const { books, vocabulary } = loadCorpus(options.corpusDir);
+  if (vocabulary.join('') !== meta.vocabulary) throw new Error(`${metaPath} has a different vocabulary from the corpus`);
+  const { reference, bits } = heldOutReference(cell, model, books.map(book => book.validation));
+  if (!(Math.abs(bits - meta.validationBitsPerChar) <= 1e-4)) {
+    throw new Error(`The held-out text costs ${bits.toFixed(5)} bits per character, not the recorded ${meta.validationBitsPerChar}`);
+  }
+  writeFileSync(metaPath, `${JSON.stringify({ ...meta, reference }, null, 2)}\n`);
+  logReference(cell, reference);
+  console.log(`Held-out bits per character ${bits.toFixed(4)}, as recorded. Wrote the reference statistics to ${metaPath} `
+    + `in ${((performance.now() - startTime) / 1000).toFixed(0)} s; ${weightsPath} was only read.`);
 }
 
 // ---------------------------------------------------------------------------------
 // Gradient check: backprop through time vs. central differences of the loss
 // ---------------------------------------------------------------------------------
 
-function checkGradients() {
+function checkGradients(cellName) {
+  const cell = CELLS[cellName];
   const random = mulberry32(7);
   const vocabulary = ['a', 'b', 'c', 'd', 'e', ' '];
   const V = vocabulary.length;
   const H = 6;
   const steps = 12;
-  const PARAMS = parameterCount(V, H);
+  const PARAMS = cell.parameterCount(V, H);
   const params = new Float32Array(PARAMS);
   for (let i = 0; i < PARAMS; i++) params[i] = (random() * 2 - 1) * 0.6;
-  const model = modelViews(params, vocabulary, H);
+  const model = modelViews(params, vocabulary, H, cell.layout);
   const text = Uint8Array.from({ length: steps + 1 }, () => Math.floor(random() * V));
   const h0 = Float32Array.from({ length: H }, () => random() * 2 - 1);
   const c0 = Float32Array.from({ length: H }, () => random() * 2 - 1);
-  const trainer = createSequenceTrainer(model, steps);
+  const trainer = cell.createTrainer(model, steps);
+  trainer.prepare?.();
+  const run = grads => (cell === CELLS.lstm ? trainer.run(text, 0, h0, c0, grads) : trainer.run(text, 0, h0, grads));
   const grads = new Float32Array(PARAMS);
-  trainer.run(text, 0, h0, c0, grads);
-  const loss = () => trainer.run(text, 0, h0, c0, new Float32Array(PARAMS));
+  run(grads);
+  const loss = () => run(new Float32Array(PARAMS));
 
   let worst = 0;
-  for (const { name, shape, offset } of tensorLayout(V, H)) {
+  for (const { name, shape, offset } of cell.layout(V, H)) {
     const count = shape.reduce((a, b) => a * b, 1);
     const direction = Float64Array.from({ length: count }, () => random() * 2 - 1);
     const length = Math.hypot(...direction);
@@ -852,16 +1189,18 @@ function checkGradients() {
     console.log(`${name.padEnd(17)} analytic ${analytic.toExponential(5).padStart(13)}  numeric ${numeric.toExponential(5).padStart(13)}  relative error ${error.toExponential(2)}`);
   }
   if (worst > 1e-3) throw new Error(`Gradient check failed (worst relative error ${worst})`);
-  console.log('Gradient check passed.');
+  console.log(`Gradient check passed (${cell.label}).`);
 }
 
 if (isMainThread) {
   try {
     const options = parseArguments(process.argv.slice(2));
-    if (options.checkGradients) checkGradients();
+    if (options.checkGradients) checkGradients(options.cell);
     else if (!options.corpusDir || !options.outDir) {
-      throw new Error('Usage: node scripts/train-char-lstm.mjs <corpus-dir> <output-dir> [--epochs N] [--seed N] [--workers N] | --check-gradients');
-    } else await train(options);
+      throw new Error('Usage: node scripts/train-char-lstm.mjs <corpus-dir> <output-dir> [--cell lstm|rnn] [--hidden N] [--output-name S] '
+        + '[--epochs N] [--seed N] [--workers N] [--corpus-only | --analyze] | --check-gradients [--cell lstm|rnn]');
+    } else if (options.analyze) analyze(options);
+    else await train(options);
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;

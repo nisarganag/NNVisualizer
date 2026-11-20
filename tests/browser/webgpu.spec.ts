@@ -108,6 +108,112 @@ test('GPT-2 runs on the GPU, matches the CPU, switches between them and generate
   await expect(page.locator('#query-weights')).not.toHaveClass(/is-loading/);
 });
 
+test('heads switched off on the GPU give the CPU’s prediction', async ({ page }) => {
+  test.setTimeout(900_000);
+  await page.goto('/transformer/?backend=gpu');
+  await page.getByRole('button', { name: 'Load the model' }).click();
+  await expect(page.locator('.candidate').first()).toBeVisible({ timeout: 300_000 });
+  const name = page.locator('#engine-name');
+  if (process.env.CI && await name.textContent() !== 'Running on your GPU') {
+    test.skip(true, `This CI runner offers no WebGPU adapter, so the page is ${await name.textContent()}.`);
+  }
+  await expect(name).toHaveText('Running on your GPU');
+  await page.selectOption('#example-select', 'When Mary and John went to the store, John gave a drink to');
+  await expect(page.locator('#token-list .token')).toHaveCount(14);
+  await settled(page);
+
+  // One head early, one late, and every head of block 6.
+  for (const [block, head] of [[12, 11], [1, 1]]) {
+    await page.locator('#block-strip .block-tile').nth(block - 1).click();
+    await page.locator('#head-grid .head-tile').nth(head - 1).click();
+    await page.getByRole('button', { name: 'Switch off this head' }).click();
+    await settled(page);
+  }
+  await page.locator('#block-strip .block-tile').nth(5).click();
+  await page.getByRole('button', { name: 'Switch off block 6' }).click();
+  await settled(page);
+  await expect(page.locator('#ablation .ablation-state')).toHaveText('14 heads switched off in blocks 1, 6 and 12');
+  await expect(page.locator('#ablation-summary')).toHaveText(/^With 14 heads off, /);
+  const read = async () => ({
+    candidates: await candidates(page),
+    lens: await page.locator('#lens-list .lens-token').allTextContents(),
+    surprises: await surprises(page),
+  });
+  const gpu = await read();
+
+  // The CPU recomputes the same tokens with the same heads off and agrees.
+  await page.getByRole('radio', { name: 'CPU', exact: true }).click();
+  await settled(page);
+  await expect(name).toHaveText('Running on the CPU');
+  await expect(page.locator('#ablation .ablation-state')).toHaveText('14 heads switched off in blocks 1, 6 and 12');
+  const cpu = await read();
+  expect(cpu.candidates.map(candidate => candidate.text)).toEqual(gpu.candidates.map(candidate => candidate.text));
+  cpu.candidates.forEach((candidate, i) => expect(Math.abs(candidate.logit - gpu.candidates[i].logit)).toBeLessThan(1e-3));
+  expect(cpu.lens).toEqual(gpu.lens);
+  cpu.surprises.forEach((bits, i) => (bits === null ? expect(gpu.surprises[i]).toBeNull() : expect(Math.abs(bits - gpu.surprises[i])).toBeLessThanOrEqual(0.11)));
+
+  // Every head back on, on the GPU, is the prediction from before any were switched off.
+  await page.getByRole('radio', { name: 'GPU', exact: true }).click();
+  await settled(page);
+  await page.getByRole('button', { name: 'Turn all back on' }).click();
+  await settled(page);
+  await expect.poll(async () => (await candidates(page)).map(candidate => candidate.text).slice(0, 2)).toEqual(['Mary', 'them']);
+  await expect(page.locator('#ablation-summary')).toBeEmpty();
+});
+
+test('the GPU tests every head in seconds, and each cell matches switching that head off', async ({ page }) => {
+  test.setTimeout(900_000);
+  await page.goto('/transformer/?backend=gpu');
+  await page.getByRole('button', { name: 'Load the model' }).click();
+  await expect(page.locator('.candidate').first()).toBeVisible({ timeout: 300_000 });
+  const name = page.locator('#engine-name');
+  if (process.env.CI && await name.textContent() !== 'Running on your GPU') {
+    test.skip(true, `This CI runner offers no WebGPU adapter, so the page is ${await name.textContent()}.`);
+  }
+  await page.selectOption('#example-select', 'When Mary and John went to the store, John gave a drink to');
+  await expect(page.locator('#token-list .token')).toHaveCount(14);
+  await settled(page);
+
+  await page.getByRole('button', { name: 'Test every head' }).click();
+  await expect(page.locator('#importance-progress')).toHaveText(/^Every head tested in \d+(\.\d)? m?s$/, { timeout: 120_000 });
+  await expect(page.locator('.importance-cell.is-known')).toHaveCount(144);
+  await expect(page.locator('#importance-readout')).toHaveText('Block 1, head 1 helps “Mary” most: switched off alone, it falls from 45.3% to 10.9%. Block 12, head 11 holds it back most: without it, “Mary” rises to 73.3%.');
+
+  // Block 2, head 4: its cell, then the head switched off for real, on the GPU and on the CPU.
+  const cell = page.locator('.importance-cell').nth(1 * 12 + 3);
+  const value = Number(await cell.getAttribute('data-value'));
+  expect(value).toBeGreaterThan(.2);
+  const expected = `With 1 head off, “Mary” fell from 45.3% to ${(value * 100).toFixed(1)}% and “them” rose to 1st.`;
+  await cell.click();
+  await expect(page.locator('#head-title')).toHaveText('Block 2, head 4');
+  await page.getByRole('button', { name: 'Switch off this head' }).click();
+  await settled(page);
+  await expect(page.locator('#ablation-summary')).toHaveText(expected);
+  await page.getByRole('radio', { name: 'CPU', exact: true }).click();
+  await settled(page);
+  await expect(name).toHaveText('Running on the CPU');
+  await expect(page.locator('#ablation-summary')).toHaveText(expected);
+  await page.getByRole('radio', { name: 'GPU', exact: true }).click();
+  await settled(page);
+  await page.getByRole('button', { name: 'Turn all back on' }).click();
+  await settled(page);
+
+  // Changing the prompt stops a test partway (a long prompt takes a few seconds) and clears its map.
+  await page.fill('#prompt-input', 'In the beginning God created the heaven and the earth. And the earth was without form, and void; and darkness was upon the face of the deep. And the Spirit of God moved upon the face of the waters.');
+  await expect(page.locator('#token-list .token')).toHaveCount(44);
+  await settled(page);
+  await expect(page.locator('#importance-map')).toBeHidden();
+  await page.getByRole('button', { name: 'Test every head' }).click();
+  await expect(page.locator('#importance-progress')).toHaveText(/^Testing [1-9]\d* of 144 heads$/, { timeout: 60_000 });
+  await page.fill('#prompt-input', 'The capital of France is');
+  await expect(page.getByRole('button', { name: 'Stop' })).toBeHidden();
+  await expect(page.locator('#token-list .token')).toHaveCount(5);
+  await settled(page);
+  await expect(page.locator('#importance-map')).toBeHidden();
+  await expect(page.locator('#importance-progress')).toHaveText('');
+  await expect(page.getByRole('button', { name: 'Test every head' })).toBeEnabled();
+});
+
 test('?backend=cpu starts on the CPU and still offers the GPU', async ({ page }) => {
   test.setTimeout(300_000);
   await page.goto('/transformer/?backend=cpu');

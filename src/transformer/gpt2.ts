@@ -6,6 +6,9 @@
  * consecutive inputs (browser) or float32 (verification). The session keeps per-token keys and values, so appending
  * tokens only computes the new positions; earlier activations never change in a
  * causal model, so they are reused as-is.
+ *
+ * Heads can be switched off (zero-ablation, see HeadMask): a new mask recomputes
+ * from the first block it changes, reusing every block before it.
  */
 
 export interface Gpt2Config {
@@ -272,6 +275,32 @@ export function surpriseOf(logits: Float32Array, token: number): Surprise {
   return { bits: Math.max(0, (max + Math.log(total) - target) / Math.LN2), rank };
 }
 
+/**
+ * Which attention heads are switched off: one bitmask per block, where bit h of
+ * mask[l] switches off head h of block l. A switched-off head still computes its
+ * scores and weights, but its output (its 64 values of `attended`) is zero at
+ * every position, so it adds nothing to the residual stream (zero-ablation).
+ */
+export type HeadMask = ArrayLike<number>;
+
+/** Checks a head mask against the model's shape and copies it; null switches every head on. */
+export function checkHeadMask(mask: HeadMask | null, config: Gpt2Config): number[] {
+  const { nLayer, nHead } = config;
+  if (!mask) return new Array<number>(nLayer).fill(0);
+  if (mask.length !== nLayer) throw new Error(`A head mask needs one bitmask per block (${nLayer}).`);
+  return Array.from(mask, bits => {
+    if (!Number.isInteger(bits) || bits < 0 || bits >= 2 ** nHead) throw new Error(`Each head mask entry is a bitmask of ${nHead} heads.`);
+    return bits;
+  });
+}
+
+/** How many heads a mask switches off. */
+export function headsOff(mask: HeadMask): number {
+  let count = 0;
+  for (let l = 0; l < mask.length; l++) for (let bits = mask[l]; bits; bits &= bits - 1) count++;
+  return count;
+}
+
 /** The `k` most likely tokens under softmax(logits), most likely first. */
 export function topTokens(logits: Float32Array, k: number): { ids: number[]; probabilities: number[] } {
   let max = -Infinity;
@@ -293,33 +322,65 @@ export function topTokens(logits: Float32Array, k: number): { ids: number[]; pro
 export class Gpt2Session {
   readonly weights: Gpt2Weights;
   readonly positions: PositionTrace[] = [];
+  /** Switched-off heads, one bitmask per block (see HeadMask). */
+  private mask: number[];
 
   constructor(weights: Gpt2Weights) {
     this.weights = weights;
+    this.mask = checkHeadMask(null, weights.config);
   }
 
   get tokens(): number[] {
     return this.positions.map(position => position.token);
   }
 
+  /** The switched-off heads, one bitmask per block (a copy). */
+  get headMask(): number[] {
+    return this.mask.slice();
+  }
+
   /**
    * Makes the session hold exactly `tokens`, reusing the longest shared prefix
-   * and computing only what changed. Returns how many positions were reused.
+   * and computing only what changed. `mask` switches heads off (see HeadMask);
+   * leaving it out keeps the current one. A new mask recomputes the kept
+   * positions from the first block whose heads changed; the blocks before it
+   * are reused. Returns how many positions were reused whole.
    */
-  setTokens(tokens: number[]): number {
-    const { nCtx } = this.weights.config;
+  setTokens(tokens: number[], mask?: HeadMask | null): number {
+    const { nCtx, nLayer } = this.weights.config;
     if (tokens.length > nCtx) throw new Error(`GPT-2 reads at most ${nCtx} tokens.`);
+    const next = mask === undefined ? this.mask : checkHeadMask(mask, this.weights.config);
+    let from = 0;
+    while (from < nLayer && next[from] === this.mask[from]) from++;
     let shared = 0;
     while (shared < tokens.length && shared < this.positions.length && tokens[shared] === this.positions[shared].token) shared++;
     this.positions.length = shared;
+    this.mask = next;
+    if (from < nLayer && shared > 0) this.recompute(from);
     if (tokens.length > shared) this.extend(tokens.slice(shared));
-    return shared;
+    return from < nLayer ? 0 : shared;
+  }
+
+  /** Switches heads off or back on for the current tokens, recomputing from the first block that changed. */
+  setHeadMask(mask: HeadMask | null): void {
+    this.setTokens(this.tokens, mask);
+  }
+
+  /**
+   * A new session with the same tokens, head mask and values, shared rather
+   * than copied: a computed value never changes. A different mask in the fork
+   * recomputes only from its first changed block and leaves this session as it is.
+   */
+  fork(): Gpt2Session {
+    const copy = new Gpt2Session(this.weights);
+    copy.positions.push(...this.positions);
+    copy.mask = this.mask.slice();
+    return copy;
   }
 
   private extend(tokens: number[]): void {
-    const { config, tokenEmbedding, positionEmbedding, layers, } = this.weights;
-    const { nEmbd, nHead, layerNormEpsilon } = config;
-    const headSize = nEmbd / nHead;
+    const { config, tokenEmbedding, positionEmbedding } = this.weights;
+    const { nEmbd } = config;
     const start = this.positions.length;
     const fresh: PositionTrace[] = tokens.map((token, index) => {
       if (token < 0 || token >= config.vocabSize) throw new Error(`Unknown token ${token}.`);
@@ -330,9 +391,32 @@ export class Gpt2Session {
       return { token, tokenEmbedding: tokenVector, positionEmbedding: positionVector, input, layers: [] };
     });
     this.positions.push(...fresh);
+    this.forward(fresh, start, 0);
+  }
 
-    let stream = fresh.map(position => position.input);
-    layers.forEach((layer, l) => {
+  /**
+   * Recomputes every position from block `from` on. New trace objects replace
+   * the old ones, which a fork may still hold; the blocks before `from` are shared.
+   */
+  private recompute(from: number): void {
+    const fresh: PositionTrace[] = this.positions.map(({ token, tokenEmbedding, positionEmbedding, input, layers }) =>
+      ({ token, tokenEmbedding, positionEmbedding, input, layers: layers.slice(0, from) }));
+    this.positions.splice(0, fresh.length, ...fresh);
+    this.forward(fresh, 0, from);
+  }
+
+  /**
+   * Runs blocks `from` to the last for `fresh`, the positions from `start` on.
+   * Earlier positions already hold every block, and fresh ones every block before `from`.
+   */
+  private forward(fresh: PositionTrace[], start: number, from: number): void {
+    const { config, layers } = this.weights;
+    const { nEmbd, nHead, layerNormEpsilon } = config;
+    const headSize = nEmbd / nHead;
+    let stream = fresh.map(position => (from === 0 ? position.input : position.layers[from - 1].output));
+    for (let l = from; l < layers.length; l++) {
+      const layer = layers[l];
+      const off = this.mask[l];
       const normed = stream.map(x => layerNorm(x, layer.ln1, layerNormEpsilon));
       const q = linear(normed, layer.attention, 0, nEmbd);
       const k = linear(normed, layer.attention, nEmbd, nEmbd);
@@ -363,10 +447,13 @@ export class Gpt2Session {
           let total = 0;
           for (let s = 0; s <= t; s++) { weights[s] = Math.exp(scores[s] - max); total += weights[s]; }
           for (let s = 0; s <= t; s++) weights[s] /= total;
-          for (let s = 0; s <= t; s++) {
-            const value = this.positions[s].layers[l].v;
-            const w = weights[s];
-            for (let d = 0; d < headSize; d++) step.attended[offset + d] += w * value[offset + d];
+          // A switched-off head passes nothing on: its slice of `attended` stays zero.
+          if (!((off >> h) & 1)) {
+            for (let s = 0; s <= t; s++) {
+              const value = this.positions[s].layers[l].v;
+              const w = weights[s];
+              for (let d = 0; d < headSize; d++) step.attended[offset + d] += w * value[offset + d];
+            }
           }
           step.scores[h] = scores;
           step.weights[h] = weights;
@@ -393,7 +480,7 @@ export class Gpt2Session {
         steps[i].output = out;
         return out;
       });
-    });
+    }
   }
 
   /** The final layer norm, which the model applies before scoring next tokens. */

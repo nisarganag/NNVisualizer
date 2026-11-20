@@ -27,6 +27,7 @@ export default defineConfig({
       input: {
         playground: page('./index.html'),
         cnn: page('./cnn/index.html'),
+        vae: page('./vae/index.html'),
         rnn: page('./rnn/index.html'),
         transformer: page('./transformer/index.html'),
       },

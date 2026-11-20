@@ -1,8 +1,13 @@
-import { Gpt2Session, matrixRow, topTokens, weightsFromBuffer, type Gpt2Manifest, type Gpt2Weights, type PositionTrace, type Surprise } from './gpt2';
-import { findAdapter, Gpt2GpuSession, GpuError, LENS_TOP, requestGpuDevice, type GpuReason } from './gpu';
+import { checkHeadMask, Gpt2Session, headsOff, matrixRow, surpriseOf, topTokens, weightsFromBuffer, type Gpt2Manifest, type Gpt2Weights,
+  type HeadMask, type PositionTrace, type Surprise } from './gpt2';
+import { findAdapter, Gpt2GpuSession, GpuError, LENS_TOP, requestGpuDevice, type GpuReason, type Probe } from './gpu';
 import { MODEL_CACHE } from './config';
 
-/** Downloads, caches and runs GPT-2 off the main thread, on the GPU (WebGPU) when it can and on the CPU otherwise. */
+/**
+ * Downloads, caches and runs GPT-2 off the main thread, on the GPU (WebGPU) when it can and on the CPU otherwise.
+ * Each processor keeps a session with every head on. Once heads are switched off, a second session runs them,
+ * and the first one's prediction comes along for comparison; both reuse the tokens they already hold.
+ */
 
 export type Backend = 'gpu' | 'cpu';
 export type { GpuReason };
@@ -13,11 +18,21 @@ export type TransformerRequest =
    * `softwareGpu` also accepts a software GPU such as SwiftShader, which is usually slower than the CPU path.
    */
   | { type: 'load'; base: string; backend: Backend; softwareGpu: boolean }
-  /** Runs on `backend` (switching first if needed, which recomputes every token there). */
-  | { type: 'run'; id: number; tokens: number[]; backend: Backend }
-  /** The logit lens at one position of the tokens from the latest run. */
+  /**
+   * Runs on `backend` (switching first if needed, which recomputes every token there) with `mask`'s heads switched
+   * off: one bitmask per block, bit h for head h (see HeadMask in gpt2.ts). Leaving it out switches every head on.
+   */
+  | { type: 'run'; id: number; tokens: number[]; backend: Backend; mask?: number[] }
+  /** The logit lens at one position of the tokens from the latest run, with its heads switched off. */
   | { type: 'lens'; id: number; position: number }
-  | { type: 'weights'; layer: number; head: number };
+  | { type: 'weights'; layer: number; head: number }
+  /**
+   * Which heads matter: switches off each head of `blocks` on its own, with every other head on, and measures the
+   * likeliest token after the last of `tokens`. Replies come a head at a time; requests in between still run.
+   */
+  | { type: 'importance'; id: number; tokens: number[]; blocks: number[] }
+  /** Ends the importance test in progress. */
+  | { type: 'stop-importance' };
 
 /** One stage of the logit lens: the likeliest next tokens if the model stopped there. */
 export interface LensRow {
@@ -62,6 +77,14 @@ export interface Trace {
   ranks: Uint32Array;
 }
 
+/** The same tokens with every head on, sent beside a trace that has heads switched off. */
+export interface Baseline {
+  logits: Float32Array;
+  /** [n] As in Trace. */
+  surprisal: Float32Array;
+  ranks: Uint32Array;
+}
+
 export type TransformerResponse =
   | { type: 'progress'; loaded: number; total: number; cached: boolean }
   /** The weights are in; the GPU is being set up. */
@@ -69,10 +92,18 @@ export type TransformerResponse =
   | { type: 'ready'; nLayer: number; nHead: number; nEmbd: number; engine: EngineState }
   /** Where the model runs changed (a switch, or the GPU stopped working). */
   | { type: 'engine'; engine: EngineState }
-  | { type: 'result'; id: number; tokens: number[]; trace: Trace; reused: number; ms: number; backend: Backend }
+  /** `mask` is the trace's switched-off heads; `baseline` is null when every head is on. */
+  | { type: 'result'; id: number; tokens: number[]; mask: number[]; trace: Trace; baseline: Baseline | null; reused: number; ms: number; backend: Backend }
   /** Rows: the embedding, then each block. Empty when the position is not in the latest tokens. */
-  | { type: 'lens'; id: number; tokens: number[]; position: number; rows: LensRow[]; ms: number; backend: Backend }
+  | { type: 'lens'; id: number; tokens: number[]; mask: number[]; position: number; rows: LensRow[]; ms: number; backend: Backend }
   | { type: 'weights'; layer: number; head: number; q: Float32Array; k: Float32Array; v: Float32Array }
+  /**
+   * The importance test so far. `target` is the likeliest token after the last of `tokens` with every head on, with
+   * probability `baseline`. With head h of block l off alone, it has probability values[l * nHead + h] (NaN until
+   * tested) and rank ranks[l * nHead + h]. `stopped` means the test ended before every head was tested.
+   */
+  | { type: 'importance'; id: number; tokens: number[]; target: number; baseline: number; values: Float32Array; ranks: Uint32Array;
+    done: number; total: number; ms: number; backend: Backend; stopped: boolean }
   | { type: 'error'; message: string };
 
 const scope = globalThis as unknown as {
@@ -80,27 +111,37 @@ const scope = globalThis as unknown as {
   postMessage: (message: TransformerResponse, transfer?: Transferable[]) => void;
 };
 
-/** What a run, the trace and the lens need from a session; the CPU and GPU sessions both provide it. */
-interface Engine {
-  readonly backend: Backend;
-  readonly weights: Gpt2Weights;
+/** What a run, the trace and the lens need from one session; the CPU and GPU sessions both provide it. */
+interface Session {
   readonly positions: PositionTrace[];
   readonly tokens: number[];
-  setTokens(tokens: number[]): number | Promise<number>;
+  readonly headMask: number[];
   surprisal(): (Surprise | null)[];
   finalHidden(): Float32Array | null;
   logits(): Float32Array | null;
   lens(position: number): LensRow[] | Promise<LensRow[]>;
 }
 
-function cpuEngine(weights: Gpt2Weights): Engine {
-  const session = new Gpt2Session(weights);
+/** One processor's sessions. */
+interface Engine {
+  readonly backend: Backend;
+  readonly weights: Gpt2Weights;
+  /**
+   * Runs `tokens` with `mask`'s heads switched off. Returns the session to show, how many of its positions were
+   * reused whole, and, when any head is off, the session with every head on for the same tokens.
+   */
+  run(tokens: number[], mask: number[]): Promise<{ shown: Session; reused: number; baseline: Session | null }>;
+  /** For each mask, how likely `target` (or the likeliest token, when null) is after `tokens` with its heads off, leaving the runs as they are. */
+  probe(tokens: number[], masks: number[][], target: number | null): Promise<Probe[]>;
+  /** Forgets every position, so the next run computes from scratch. */
+  reset(): void;
+}
+
+function cpuSession(session: Gpt2Session): Session {
   return {
-    backend: 'cpu',
-    weights,
     get positions() { return session.positions; },
     get tokens() { return session.tokens; },
-    setTokens: tokens => session.setTokens(tokens),
+    get headMask() { return session.headMask; },
     surprisal: () => session.surprisal(),
     finalHidden: () => session.finalHidden(),
     logits: () => session.logits(),
@@ -108,15 +149,96 @@ function cpuEngine(weights: Gpt2Weights): Engine {
   };
 }
 
+/** Roughly how many block passes `session` needs to hold `tokens` with `mask`: new positions take every block, kept ones those from the first changed block. */
+function cost(session: Gpt2Session, tokens: number[], mask: number[]): number {
+  const { nLayer } = session.weights.config;
+  const current = session.headMask;
+  let from = 0;
+  while (from < nLayer && current[from] === mask[from]) from++;
+  let shared = 0;
+  while (shared < tokens.length && shared < session.positions.length && tokens[shared] === session.positions[shared].token) shared++;
+  return (tokens.length - shared) * nLayer + shared * (nLayer - from);
+}
+
+function cpuEngine(weights: Gpt2Weights): Engine {
+  const on = new Gpt2Session(weights);
+  let off: Gpt2Session | null = null;
+  return {
+    backend: 'cpu',
+    weights,
+    async run(tokens, mask) {
+      const reused = on.setTokens(tokens);
+      if (!headsOff(mask)) return { shown: cpuSession(on), reused, baseline: null };
+      // Start from whichever needs less work: the last session with heads off, or a copy of the one with every
+      // head on, which only recomputes from the first block with a head off.
+      if (!off || cost(on, tokens, mask) < cost(off, tokens, mask)) off = on.fork();
+      return { shown: cpuSession(off), reused: off.setTokens(tokens, mask), baseline: cpuSession(on) };
+    },
+    async probe(tokens, masks, target) {
+      return masks.map(mask => {
+        // A copy of the session with every head on, recomputed from the first block with a head off.
+        const session = on.fork();
+        session.setTokens(tokens, mask);
+        const logits = session.logits();
+        const top = topTokens(logits, 1).ids[0];
+        const { bits, rank } = surpriseOf(logits, target ?? top);
+        return { probability: 2 ** -bits, rank, top };
+      });
+    },
+    reset() {
+      on.setTokens([]);
+      off = null;
+    },
+  };
+}
+
+function gpuEngineFor(on: Gpt2GpuSession): Engine {
+  let off: Gpt2GpuSession | null = null;
+  /** A third session whose cache the probes may overwrite. */
+  let probing: Gpt2GpuSession | null = null;
+  return {
+    backend: 'gpu',
+    weights: on.weights,
+    async run(tokens, mask) {
+      const reused = await on.setTokens(tokens);
+      if (!headsOff(mask)) return { shown: on, reused, baseline: null };
+      off ??= on.sibling();
+      return { shown: off, reused: await off.setTokens(tokens, mask), baseline: on };
+    },
+    probe(tokens, masks, target) {
+      probing ??= on.sibling();
+      // Blocks before the first switched-off head match the run with every head on: when that run holds these
+      // tokens, the probes start from its stream there.
+      const { nEmbd } = on.weights.config;
+      const from = Math.min(...masks.map(mask => Math.max(0, mask.findIndex(Boolean))));
+      const held = on.positions;
+      if (from > 0 && held.length >= tokens.length && tokens.every((token, t) => held[t].token === token)) {
+        const stream = new Float32Array(tokens.length * nEmbd);
+        tokens.forEach((_token, t) => stream.set(held[t].layers[from - 1].output, t * nEmbd));
+        return probing.probe(tokens, masks, target, from, stream);
+      }
+      return probing.probe(tokens, masks, target);
+    },
+    reset() {
+      on.reset();
+      off?.reset();
+    },
+  };
+}
+
 let weights: Gpt2Weights | null = null;
 let engine: Engine | null = null;
 let gpu: Gpt2GpuSession | null = null;
+/** The engine around `gpu`, while there is one. */
+let gpuEngine: Engine | null = null;
+/** The session the latest run showed, which the lens reads. */
+let shown: Session | null = null;
 /** Why the GPU can't be used; null while it can (or hasn't been tried). */
 let gpuReason: GpuReason | null = null;
 /** Whether a GPU adapter exists, before the GPU has been set up. */
 let gpuSeen = false;
 /** The latest run, so a lost GPU can be replaced without the page asking again. */
-let latest: { id: number; tokens: number[] } | null = null;
+let latest: { id: number; tokens: number[]; mask: number[] } | null = null;
 
 const engineState = (): EngineState => ({
   backend: engine?.backend ?? 'cpu',
@@ -153,10 +275,12 @@ function startGpu(): Promise<void> {
       const session = await creating;
       await session.check(expected);
       gpu = session;
+      gpuEngine = gpuEngineFor(session);
       gpuReason = null;
     } catch (error) {
       device?.destroy();
       gpu = null;
+      gpuEngine = null;
       gpuReason = error instanceof GpuError ? error.reason : 'device';
     }
   })();
@@ -176,10 +300,9 @@ async function probeGpu(): Promise<void> {
 /** Makes `backend` the engine, starting from no tokens there (a fair timing for comparisons). */
 async function select(backend: Backend): Promise<void> {
   if (backend === 'gpu' && !gpu && gpuReason === null) await startGpu();
-  const next = backend === 'gpu' && gpu ? gpu : engine?.backend === 'cpu' ? engine : cpuEngine(weights);
+  const next = backend === 'gpu' && gpuEngine ? gpuEngine : engine?.backend === 'cpu' ? engine : cpuEngine(weights);
   if (next === engine) return;
-  if (gpu && next !== gpu) gpu.reset();
-  if (next === gpu) gpu.reset();
+  gpuEngine?.reset();
   engine = next;
   announce();
 }
@@ -188,6 +311,7 @@ async function select(backend: Backend): Promise<void> {
 function dropGpu(reason: GpuReason): void {
   gpu?.destroy();
   gpu = null;
+  gpuEngine = null;
   gpuReason = reason;
   if (engine?.backend !== 'cpu') engine = cpuEngine(weights);
   announce();
@@ -196,9 +320,9 @@ function dropGpu(reason: GpuReason): void {
 /** When the GPU goes away between requests, recompute the latest tokens on the CPU so the page stays current. */
 async function replaceLostGpu(lost: Gpt2GpuSession): Promise<void> {
   if (gpu !== lost) return;
-  const wasRunning = engine === lost;
+  const wasRunning = engine === gpuEngine;
   dropGpu('lost');
-  if (wasRunning && latest) await run(latest.id, latest.tokens, 'cpu');
+  if (wasRunning && latest) await run(latest.id, latest.tokens, latest.mask, 'cpu');
 }
 
 async function load(base: string, backend: Backend, software: boolean): Promise<void> {
@@ -253,8 +377,21 @@ async function load(base: string, backend: Backend, software: boolean): Promise<
   scope.postMessage({ type: 'ready', nLayer, nHead, nEmbd, engine: engineState() });
 }
 
-function pack(current: Engine): Trace {
-  const { nLayer, nHead, nEmbd } = current.weights.config;
+/** Bits of surprise and ranks per token, kept by the session so only new tokens cost anything. */
+function surprises(session: Session): { surprisal: Float32Array; ranks: Uint32Array } {
+  const n = session.positions.length;
+  const surprisal = new Float32Array(n).fill(Number.NaN);
+  const ranks = new Uint32Array(n);
+  session.surprisal().forEach((surprise, t) => {
+    if (!surprise) return;
+    surprisal[t] = surprise.bits;
+    ranks[t] = surprise.rank;
+  });
+  return { surprisal, ranks };
+}
+
+function pack(current: Session): Trace {
+  const { nLayer, nHead, nEmbd, vocabSize } = weights.config;
   const hidden = 4 * nEmbd;
   const positions = current.positions;
   const n = positions.length;
@@ -263,7 +400,7 @@ function pack(current: Engine): Trace {
   const q = make(), k = make(), v = make(), attended = make(), output = make();
   const mlp = new Float32Array(nLayer * n * hidden);
   const scores = new Float32Array(nLayer * nHead * n * n).fill(Number.NaN);
-  const weights = new Float32Array(nLayer * nHead * n * n);
+  const attention = new Float32Array(nLayer * nHead * n * n);
   positions.forEach((position, t) => {
     embeddings.set(position.tokenEmbedding, t * nEmbd);
     embeddings.set(position.positionEmbedding, (n + t) * nEmbd);
@@ -279,63 +416,125 @@ function pack(current: Engine): Trace {
       for (let h = 0; h < nHead; h++) {
         const row = ((l * nHead + h) * n + t) * n;
         scores.set(step.scores[h], row);
-        weights.set(step.weights[h], row);
+        attention.set(step.weights[h], row);
       }
     });
   });
-  // Scored once per position and kept by the session, so only new tokens cost anything.
-  const surprisal = new Float32Array(n).fill(Number.NaN);
-  const ranks = new Uint32Array(n);
-  current.surprisal().forEach((surprise, t) => {
-    if (!surprise) return;
-    surprisal[t] = surprise.bits;
-    ranks[t] = surprise.rank;
-  });
   return {
-    n, embeddings, q, k, v, attended, output, mlp, scores, weights,
+    n, embeddings, q, k, v, attended, output, mlp, scores, weights: attention,
     finalHidden: current.finalHidden() ?? new Float32Array(nEmbd),
-    logits: current.logits() ?? new Float32Array(current.weights.config.vocabSize),
-    surprisal, ranks,
+    logits: current.logits() ?? new Float32Array(vocabSize),
+    ...surprises(current),
   };
 }
 
-async function run(id: number, tokens: number[], backend: Backend): Promise<void> {
+async function run(id: number, tokens: number[], mask: HeadMask | null, backend: Backend): Promise<void> {
   if (!weights) throw new Error('Load the model first.');
+  const bits = checkHeadMask(mask, weights.config);
   await select(backend);
   const started = performance.now();
-  let reused: number;
+  let outcome: Awaited<ReturnType<Engine['run']>>;
   try {
-    reused = await engine.setTokens(tokens);
+    outcome = await engine.run(tokens, bits);
   } catch (error) {
     if (!(error instanceof GpuError)) throw error;
     // The GPU failed partway: finish this run on the CPU.
     dropGpu(error.reason);
-    reused = await engine.setTokens(tokens);
+    outcome = await engine.run(tokens, bits);
   }
-  latest = { id, tokens };
-  const trace = pack(engine);
-  scope.postMessage({ type: 'result', id, tokens, trace, reused, ms: performance.now() - started, backend: engine.backend },
-    [trace.embeddings, trace.q, trace.k, trace.v, trace.attended, trace.output, trace.mlp, trace.scores, trace.weights, trace.finalHidden, trace.logits,
-      trace.surprisal, trace.ranks].map(array => array.buffer as ArrayBuffer));
+  latest = { id, tokens, mask: bits };
+  shown = outcome.shown;
+  const trace = pack(shown);
+  const baseline: Baseline | null = outcome.baseline && { logits: outcome.baseline.logits(), ...surprises(outcome.baseline) };
+  const arrays = [trace.embeddings, trace.q, trace.k, trace.v, trace.attended, trace.output, trace.mlp, trace.scores, trace.weights, trace.finalHidden,
+    trace.logits, trace.surprisal, trace.ranks, ...(baseline ? [baseline.logits, baseline.surprisal, baseline.ranks] : [])];
+  scope.postMessage({ type: 'result', id, tokens, mask: bits, trace, baseline, reused: outcome.reused, ms: performance.now() - started, backend: engine.backend },
+    arrays.map(array => array.buffer as ArrayBuffer));
 }
 
 /** The top three next tokens after the embedding and after each block. */
 async function lens(id: number, position: number): Promise<void> {
   const started = performance.now();
-  const known = engine !== null && position >= 0 && position < engine.positions.length;
+  const known = shown !== null && position >= 0 && position < shown.positions.length;
   let rows: LensRow[] = [];
   if (known) {
     try {
-      rows = await engine.lens(position);
+      rows = await shown.lens(position);
     } catch (error) {
       if (!(error instanceof GpuError) || !latest) throw error;
       // Continue on the CPU, which first recomputes the tokens the page shows.
       dropGpu(error.reason);
-      await run(latest.id, latest.tokens, 'cpu');
-      rows = await engine.lens(position);
+      await run(latest.id, latest.tokens, latest.mask, 'cpu');
+      rows = await shown.lens(position);
     }
   }
-  scope.postMessage({ type: 'lens', id, tokens: engine?.tokens ?? [], position, rows, ms: performance.now() - started, backend: engine?.backend ?? 'cpu' });
+  scope.postMessage({ type: 'lens', id, tokens: shown?.tokens ?? [], mask: shown?.headMask ?? checkHeadMask(null, weights.config), position, rows,
+    ms: performance.now() - started, backend: engine?.backend ?? 'cpu' });
+}
+
+/** The importance test in progress; a stop request or a newer test ends it. */
+let test: { stopped: boolean } | null = null;
+
+/**
+ * Switches off each head of `blocks` alone and measures the likeliest token after `tokens` (with every head on)
+ * each time. Each head is its own task in the queue, so runs and lenses asked for meanwhile wait for one head at most.
+ */
+function importance(id: number, tokens: number[], blocks: number[]): void {
+  if (test) test.stopped = true;
+  const job: { stopped: boolean } = { stopped: false };
+  test = job;
+  const { nLayer, nHead } = weights.config;
+  const none = checkHeadMask(null, weights.config);
+  const heads = blocks.flatMap(l => Array.from({ length: nHead }, (_, h) => [l, h]));
+  const values = new Float32Array(nLayer * nHead).fill(Number.NaN);
+  const ranks = new Uint32Array(nLayer * nHead);
+  const started = performance.now();
+  let target = -1;
+  let baseline = 0;
+  let done = 0;
+  const report = (stopped: boolean) => scope.postMessage({ type: 'importance', id, tokens, target, baseline, values: values.slice(),
+    ranks: ranks.slice(), done, total: heads.length, ms: performance.now() - started, backend: engine?.backend ?? 'cpu', stopped });
+  const step = async () => {
+    if (job.stopped) return;
+    if (!engine || !tokens.length) {
+      report(true);
+      return;
+    }
+    try {
+      if (target < 0) {
+        ({ top: target, probability: baseline } = (await engine.probe(tokens, [none], null))[0]);
+      } else {
+        // The GPU tests a block's heads in one go (half a block for long prompts); the CPU one head at a time, so other
+        // requests never wait long.
+        const size = engine.backend === 'cpu' ? 1 : tokens.length > 24 ? nHead / 2 : nHead;
+        const chunk = heads.slice(done, done + Math.min(size, nHead - heads[done][1]));
+        const masks = chunk.map(([l, h]) => {
+          const mask = none.slice();
+          mask[l] = 1 << h;
+          return mask;
+        });
+        const results = await engine.probe(tokens, masks, target);
+        chunk.forEach(([l, h], i) => {
+          values[l * nHead + h] = results[i].probability;
+          ranks[l * nHead + h] = results[i].rank;
+        });
+        done += chunk.length;
+      }
+    } catch (error) {
+      if (!(error instanceof GpuError)) throw error;
+      // The test ends; the page continues on the CPU, which first recomputes the tokens it shows.
+      job.stopped = true;
+      report(true);
+      dropGpu(error.reason);
+      if (latest) await run(latest.id, latest.tokens, latest.mask, 'cpu');
+      return;
+    }
+    if (job.stopped) return;
+    report(false);
+    if (done < heads.length) enqueue(step);
+    else if (test === job) test = null;
+  };
+  enqueue(step);
 }
 
 function headWeights(layer: number, head: number) {
@@ -358,9 +557,13 @@ scope.onmessage = ({ data }) => {
   if (data.type === 'load') {
     enqueue(() => load(data.base, data.backend, data.softwareGpu));
   } else if (data.type === 'run') {
-    enqueue(() => run(data.id, data.tokens, data.backend));
+    enqueue(() => run(data.id, data.tokens, data.mask ?? null, data.backend));
   } else if (data.type === 'lens') {
     enqueue(() => lens(data.id, data.position));
+  } else if (data.type === 'importance') {
+    importance(data.id, data.tokens, data.blocks);
+  } else if (data.type === 'stop-importance') {
+    if (test) test.stopped = true;
   } else if (data.type === 'weights') {
     // Reads only the weights, so it doesn't wait for a run.
     try {

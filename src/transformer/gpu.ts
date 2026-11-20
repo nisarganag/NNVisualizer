@@ -22,11 +22,12 @@
  *   correction for the outsized hidden dimensions. It is always tiled, so the
  *   lens's last row and the trace's logits come out identical.
  * - attention: one workgroup per token and head: causal scores, softmax
- *   weights and the weighted sum of values.
+ *   weights and the weighted sum of values, or zeros for a switched-off head
+ *   (whose scores and weights are still traced).
  * - stats: per row of logits, the maximum, the softmax denominator, how many
  *   tokens beat a given one (its rank) and the three most likely tokens.
  */
-import { Gpt2Session, topTokens, type Gpt2Config, type Gpt2Weights, type Matrix, type PositionTrace, type Surprise } from './gpt2';
+import { checkHeadMask, Gpt2Session, topTokens, type Gpt2Config, type Gpt2Weights, type HeadMask, type Matrix, type PositionTrace, type Surprise } from './gpt2';
 
 /** Why the GPU isn't running the model. */
 export type GpuReason = 'unsupported' | 'no-adapter' | 'device' | 'memory' | 'mismatch' | 'lost' | 'error';
@@ -37,6 +38,13 @@ export class GpuError extends Error {
     super(detail ? `${reason}: ${detail}` : reason);
     this.reason = reason;
   }
+}
+
+/** How likely a token is after a probe's last token, its rank (1 = likeliest), and the likeliest token. */
+export interface Probe {
+  probability: number;
+  rank: number;
+  top: number;
 }
 
 /** The likeliest next tokens at one stage of the logit lens, most likely first. */
@@ -68,7 +76,8 @@ const TRACE_BUDGET = 8 << 20;
 /** Each dispatch's parameters sit at their own uniform offset. */
 const SLOT_BYTES = 256;
 const SLOT = SLOT_BYTES / 4;
-const MAX_SLOTS = 128;
+/** Enough for a run (about 90 dispatches) or twelve probes from the first block. */
+const MAX_SLOTS = 1152;
 /** u32 values per row of logit statistics. */
 const STAT = 16;
 const NONE = 0xffffffff;
@@ -340,7 +349,7 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
 `;
 
   const attention = common + /* wgsl */ `
-struct P { tokens: u32, start: u32, q: u32, stride: u32, attended: u32, kv: u32, scores: u32, weights: u32, rowLength: u32 }
+struct P { tokens: u32, start: u32, q: u32, stride: u32, attended: u32, kv: u32, scores: u32, weights: u32, rowLength: u32, off: u32 }
 @group(0) @binding(0) var<uniform> p: P;
 @group(0) @binding(1) var<storage, read_write> work: array<f32>;
 @group(0) @binding(2) var<storage, read> kc: array<f32>;
@@ -395,6 +404,11 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
     work[p.weights + traced + s] = w;
   }
   workgroupBarrier();
+  // A switched-off head (bit h of p.off) keeps its scores and weights for the trace, but passes on zeros.
+  if (((p.off >> h) & 1u) != 0u) {
+    work[p.attended + i * p.stride + head + lid] = 0.0;
+    return;
+  }
   var acc = 0.0;
   for (var s = 0u; s <= t; s++) { acc += row[s] * vc[p.kv + s * D + head + lid]; }
   work[p.attended + i * p.stride + head + lid] = acc;
@@ -579,11 +593,14 @@ export class Gpt2GpuSession {
   private capacity = 0;
   private staging: GPUBuffer | null = null;
   private groups: Groups | null = null;
+  /** Switched-off heads, one bitmask per block (see HeadMask in gpt2.ts). */
+  private mask: number[];
 
   private constructor(device: GPUDevice, weights: Gpt2Weights, onLost?: (session: Gpt2GpuSession) => void) {
     this.device = device;
     this.weights = weights;
     this.config = weights.config;
+    this.mask = checkHeadMask(null, this.config);
     this.record = 7 * this.config.nEmbd + 4 * this.config.nEmbd;
     device.lost.then(info => {
       this.lost = true;
@@ -616,16 +633,48 @@ export class Gpt2GpuSession {
     return session;
   }
 
+  /**
+   * Another session on the same device, sharing the uploaded weights and the
+   * kernels, with its own tokens, head mask and key/value cache: the worker
+   * keeps one with every head on beside one with heads switched off.
+   * Destroying either session frees the device for both.
+   */
+  sibling(): Gpt2GpuSession {
+    this.usable();
+    const other = new Gpt2GpuSession(this.device, this.weights);
+    other.pipelines = this.pipelines;
+    other.layouts = this.layouts;
+    other.tensors = this.tensors;
+    other.floats = this.floats;
+    other.offsets = this.offsets;
+    other.uniforms = this.uniforms;
+    other.aux = this.aux;
+    other.statBuffer = this.statBuffer;
+    other.logitBuffer = this.logitBuffer;
+    return other;
+  }
+
   get tokens(): number[] {
     return this.positions.map(position => position.token);
   }
 
-  /** Same contract as Gpt2Session.setTokens: keeps the shared prefix, computes the rest, returns how many were reused. */
-  async setTokens(tokens: number[]): Promise<number> {
+  /** The switched-off heads, one bitmask per block (a copy). */
+  get headMask(): number[] {
+    return this.mask.slice();
+  }
+
+  /**
+   * Same contract as Gpt2Session.setTokens: keeps the shared prefix, computes the rest, returns how many were reused.
+   * A new head mask changes every block from the first one it touches, so the GPU computes every position again.
+   */
+  async setTokens(tokens: number[], mask?: HeadMask | null): Promise<number> {
     this.usable();
     const { nCtx, vocabSize } = this.config;
     if (tokens.length > nCtx) throw new Error(`GPT-2 reads at most ${nCtx} tokens.`);
     for (const token of tokens) if (!Number.isInteger(token) || token < 0 || token >= vocabSize) throw new Error(`Unknown token ${token}.`);
+    const next = mask === undefined ? this.mask : checkHeadMask(mask, this.config);
+    if (next.some((bits, l) => bits !== this.mask[l])) this.positions.length = 0;
+    this.mask = next;
     let shared = 0;
     while (shared < tokens.length && shared < this.positions.length && tokens[shared] === this.positions[shared].token) shared++;
     this.positions.length = shared;
@@ -689,6 +738,51 @@ export class Gpt2GpuSession {
       const total = floats[o + 1];
       const ids = Array.from(words.subarray(o + 7, o + 7 + LENS_TOP));
       return { ids, probabilities: ids.map((_id, k) => Math.exp(floats[o + 4 + k] - max) / total) };
+    });
+  }
+
+  /**
+   * Runs `tokens` once per mask, with that mask's heads switched off, and reads back only how likely `target` is
+   * after the last token (or the likeliest token, when `target` is null): no trace, so a probe costs little more than
+   * its computing, and all of them share one command buffer. Every mask must leave the blocks before `from` whole;
+   * from a later block, `stream` holds that block's input for every token (as with every head on, [token][768]).
+   * Probes overwrite the key/value cache, so the session forgets its positions.
+   */
+  async probe(tokens: number[], masks: HeadMask[], target: number | null, from = 0, stream: Float32Array | null = null): Promise<Probe[]> {
+    this.usable();
+    const { nEmbd: D, nLayer: L, nHead: H, vocabSize } = this.config;
+    const bits = masks.map(mask => checkHeadMask(mask, this.config));
+    const T = tokens.length;
+    if (T < 1 || T > MAX_BATCH) throw new Error(`A probe reads 1 to ${MAX_BATCH} tokens.`);
+    for (const token of [...tokens, target ?? 0]) if (!Number.isInteger(token) || token < 0 || token >= vocabSize) throw new Error(`Unknown token ${token}.`);
+    // Dispatches per probe: seven per block, the embedding from the first block, then the norm, vocabulary and statistics.
+    const dispatches = 7 * (L - from) + (from === 0 ? 1 : 0) + 3;
+    if (bits.length < 1 || bits.length * dispatches > MAX_SLOTS || bits.length * STAT > (MAX_BATCH + 1) * STAT) throw new Error('Too many probes at once.');
+    if (from > 0 && (stream?.length !== T * D || bits.some(mask => mask.slice(0, from).some(Boolean)))) throw new Error(`Probes from block ${from + 1} need its input and no heads off before it.`);
+    this.positions.length = 0;
+    const layout = this.layout(T, T, 1);
+    const { field, record } = this.fields(layout, T);
+    // aux: token ids, where the last position's residual stream lives, and the token to rank.
+    const aux = Uint32Array.of(...tokens, record(L - 1, T - 1) + field.output, target ?? 0);
+    const bytes = bits.length * STAT * 4;
+    const data = await this.submit(layout, bytes, (encode, groups) => {
+      this.device.queue.writeBuffer(this.aux, 0, aux);
+      if (from > 0) this.device.queue.writeBuffer(this.work, (layout.embeddings + 2 * T * D) * 4, stream);
+      bits.forEach((mask, i) => {
+        this.encodeBlocks(encode, groups, layout, T, 0, mask, from);
+        // The vocabulary for the last position, then this probe's own row of statistics.
+        this.unembed(encode, groups, layout, T, T + 1, 1, 0, 0);
+        encode('stats', groups.stats, [1, 0, T + 1, i * STAT], 1);
+      });
+    }, encoder => encoder.copyBufferToBuffer(this.statBuffer, 0, this.staging, 0, bytes), T, 0);
+    const floats = new Float32Array(data);
+    const words = new Uint32Array(data);
+    return bits.map((_mask, i) => {
+      const o = i * STAT;
+      const [max, total] = [floats[o], floats[o + 1]];
+      return target === null
+        ? { probability: Math.exp(floats[o + 4] - max) / total, rank: 1, top: words[o + 7] }
+        : { probability: Math.exp(floats[o + 2] - max) / total, rank: words[o + 3] + 1, top: words[o + 7] };
     });
   }
 
@@ -942,12 +1036,18 @@ export class Gpt2GpuSession {
     this.reserve(layout.size, positions, encoder, keep);
     this.stage(bytes);
     const groups = this.bindGroups();
-    const params = new Uint32Array(MAX_SLOTS * SLOT);
+    // Sized for a run; a command buffer of probes grows it.
+    let params = new Uint32Array(128 * SLOT);
     let slot = 0;
     const pass = encoder.beginComputePass();
     let current: GPUComputePipeline | null = null;
     const encode: Encode = (kernel, group, values, x, y = 1) => {
       if (slot === MAX_SLOTS) throw new GpuError('error', 'too many dispatches');
+      if ((slot + 1) * SLOT > params.length) {
+        const grown = new Uint32Array(Math.min(MAX_SLOTS, 2 * params.length / SLOT) * SLOT);
+        grown.set(params);
+        params = grown;
+      }
       params.set(values, slot * SLOT);
       if (this.pipelines[kernel] !== current) pass.setPipeline(current = this.pipelines[kernel]);
       pass.setBindGroup(0, group, [slot * SLOT_BYTES]);
@@ -977,15 +1077,69 @@ export class Gpt2GpuSession {
     return data;
   }
 
-  /** The final norm, the vocabulary and the statistics for `rows` vectors. */
-  private unembed(encode: Encode, groups: Groups, layout: Layout, table: number, wanted: number, rows: number, start = 0): void {
+  /**
+   * The final norm, the vocabulary and the statistics for `rows` vectors. A run ranks each row's next token, so by
+   * default the last row, whose next token isn't known yet, gets no statistics.
+   */
+  private unembed(encode: Encode, groups: Groups, layout: Layout, table: number, wanted: number, rows: number, start = 0,
+      statRows = wanted === NONE ? rows : rows - 1): void {
     const { nEmbd: D, vocabSize: V } = this.config;
     const [gamma, beta] = this.offsets.final;
     encode('norm', groups.norm, [rows, start, D, layout.final, D, gamma, beta, table], rows);
     encode('vocab', groups.vocab, [V, D, rows, 0, layout.final, D, 0, V, 0, 0, this.offsets.wte, 0, 0, this.offsets.err],
       Math.ceil(V / TILE_ROWS), Math.ceil(rows / TILE_TOKENS));
-    const statRows = wanted === NONE ? rows : rows - 1;
     if (statRows > 0) encode('stats', groups.stats, [statRows, 0, wanted, 0], statRows);
+  }
+
+  /** Where each value sits in a token's record for one block, and where token i's record for block l starts. */
+  private fields(layout: Layout, tokens: number) {
+    const D = this.config.nEmbd;
+    return {
+      field: { normed: 0, q: D, attended: 4 * D, after: 5 * D, output: 6 * D, mlp: 7 * D },
+      record: (l: number, i = 0) => layout.records + (l * tokens + i) * this.record,
+    };
+  }
+
+  /**
+   * Encodes the embedding and every block for `tokens` new tokens after `start` positions, with `mask`'s heads
+   * switched off. Keys and values go to the cache; every intermediate stays in the work buffer as `layout` places it.
+   * From a later block `from`, the embedding is skipped: the caller has put that block's input where the embedding
+   * sum would be.
+   */
+  private encodeBlocks(encode: Encode, groups: Groups, layout: Layout, tokens: number, start: number, mask: number[], from = 0): void {
+    const { nEmbd: D, nLayer: L, nHead: H } = this.config;
+    const REC = this.record;
+    const T = tokens;
+    const n = start + T;
+    const { field, record } = this.fields(layout, T);
+    const kv = (l: number) => l * this.capacity * D;
+    if (from === 0) {
+      encode('embed', groups.embed, [T, start, layout.embeddings, layout.embeddings + T * D, layout.embeddings + 2 * T * D,
+        this.offsets.wte, this.offsets.wpe, 0], Math.ceil(D / 4 / 64), T);
+    }
+    // y = W x + b for this batch: one row per 16 lanes for a few tokens, 64 rows by 16 tokens otherwise.
+    const product = (group: GPUBindGroup, values: number[], rows: number) => (T <= VECTOR_TOKENS
+      ? encode('matvec', group, values, Math.ceil(rows / 16))
+      : encode('matmul', group, values, Math.ceil(rows / TILE_ROWS), Math.ceil(T / TILE_TOKENS)));
+    for (let l = from; l < L; l++) {
+      const at = this.offsets.layers[l];
+      const base = record(l);
+      // The block's input: the embedding sum (or what stands in for it), or the previous block's output.
+      const [input, inputStride] = l === from ? [layout.embeddings + 2 * T * D, D] : [record(l - 1) + field.output, REC];
+      const layer = groups.layers[l];
+      encode('norm', groups.norm, [T, input, inputStride, base + field.normed, REC, at.ln1[0], at.ln1[1], NONE], T);
+      product(layer.qkv, [3 * D, D, T, CACHE, base + field.normed, REC, base + field.q, REC, 0, 0,
+        at.qkv[0], at.qkv[1], kv(l) + start * D, 0], 3 * D);
+      encode('attention', groups.attention, [T, start, base + field.q, REC, base + field.attended, kv(l),
+        layout.scores + l * T * H * n, layout.weights + l * T * H * n, n, mask[l]], T, H);
+      product(layer.proj, [D, D, T, RESIDUAL, base + field.attended, REC, base + field.after, REC, input, inputStride,
+        at.proj[0], at.proj[1], 0, 0], D);
+      encode('norm', groups.norm, [T, base + field.after, REC, layout.normed2, D, at.ln2[0], at.ln2[1], NONE], T);
+      product(layer.up, [4 * D, D, T, GELU, layout.normed2, D, base + field.mlp, REC, 0, 0,
+        at.up[0], at.up[1], 0, 0], 4 * D);
+      product(layer.down, [D, 4 * D, T, RESIDUAL, base + field.mlp, REC, base + field.output, REC, base + field.after, REC,
+        at.down[0], at.down[1], 0, 0], D);
+    }
   }
 
   /**
@@ -995,7 +1149,6 @@ export class Gpt2GpuSession {
    */
   private async batch(fresh: number[]): Promise<void> {
     const { nEmbd: D, nLayer: L, nHead: H, vocabSize: V } = this.config;
-    const REC = this.record;
     const T = fresh.length;
     const start = this.positions.length;
     const n = start + T;
@@ -1003,8 +1156,7 @@ export class Gpt2GpuSession {
     const first = Math.max(0, start - 1);
     const rows = n - first;
     const layout = this.layout(T, n, rows);
-    const field = { normed: 0, q: D, attended: 4 * D, after: 5 * D, output: 6 * D, mlp: 7 * D };
-    const record = (l: number, i = 0) => layout.records + (l * T + i) * REC;
+    const { field, record } = this.fields(layout, T);
 
     // aux: token ids, where each logit row's residual stream lives, and the token each row should rank.
     const table = T;
@@ -1027,34 +1179,7 @@ export class Gpt2GpuSession {
       const { queue } = this.device;
       queue.writeBuffer(this.aux, 0, aux);
       if (start > 0) queue.writeBuffer(this.work, layout.previous * 4, this.positions[start - 1].layers[L - 1].output);
-      if (T > 0) {
-        const kv = (l: number) => l * this.capacity * D;
-        encode('embed', groups.embed, [T, start, layout.embeddings, layout.embeddings + T * D, layout.embeddings + 2 * T * D,
-          this.offsets.wte, this.offsets.wpe, 0], Math.ceil(D / 4 / 64), T);
-        // y = W x + b for this batch: one row per 16 lanes for a few tokens, 64 rows by 16 tokens otherwise.
-        const product = (group: GPUBindGroup, values: number[], rows: number) => (T <= VECTOR_TOKENS
-          ? encode('matvec', group, values, Math.ceil(rows / 16))
-          : encode('matmul', group, values, Math.ceil(rows / TILE_ROWS), Math.ceil(T / TILE_TOKENS)));
-        for (let l = 0; l < L; l++) {
-          const at = this.offsets.layers[l];
-          const base = record(l);
-          // The block's input: the embedding sum, or the previous block's output.
-          const [input, inputStride] = l === 0 ? [layout.embeddings + 2 * T * D, D] : [record(l - 1) + field.output, REC];
-          const layer = groups.layers[l];
-          encode('norm', groups.norm, [T, input, inputStride, base + field.normed, REC, at.ln1[0], at.ln1[1], NONE], T);
-          product(layer.qkv, [3 * D, D, T, CACHE, base + field.normed, REC, base + field.q, REC, 0, 0,
-            at.qkv[0], at.qkv[1], kv(l) + start * D, 0], 3 * D);
-          encode('attention', groups.attention, [T, start, base + field.q, REC, base + field.attended, kv(l),
-            layout.scores + l * T * H * n, layout.weights + l * T * H * n, n], T, H);
-          product(layer.proj, [D, D, T, RESIDUAL, base + field.attended, REC, base + field.after, REC, input, inputStride,
-            at.proj[0], at.proj[1], 0, 0], D);
-          encode('norm', groups.norm, [T, base + field.after, REC, layout.normed2, D, at.ln2[0], at.ln2[1], NONE], T);
-          product(layer.up, [4 * D, D, T, GELU, layout.normed2, D, base + field.mlp, REC, 0, 0,
-            at.up[0], at.up[1], 0, 0], 4 * D);
-          product(layer.down, [D, 4 * D, T, RESIDUAL, base + field.mlp, REC, base + field.output, REC, base + field.after, REC,
-            at.down[0], at.down[1], 0, 0], D);
-        }
-      }
+      if (T > 0) this.encodeBlocks(encode, groups, layout, T, start, this.mask);
       this.unembed(encode, groups, layout, table, wanted, rows);
     }, encoder => {
       if (traceBytes) encoder.copyBufferToBuffer(this.work, 0, this.staging, 0, traceBytes);

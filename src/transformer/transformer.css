@@ -40,6 +40,12 @@
 .engine-choice .field-label { white-space: nowrap; }
 .engine-choice .segmented button { min-width: 52px; justify-content: center; }
 
+/* Switched-off heads: one line for the whole page, shown while any head is off. */
+.ablation { display: flex; flex: 1 1 100%; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 7px 7px 7px 14px; border-radius: var(--radius-control); background: var(--well); }
+.ablation-state { display: flex; align-items: center; gap: 10px; min-width: 0; color: var(--ink-2); font-size: 13px; }
+.ablation-state .icon { color: var(--ink); }
+.ablation-count { color: var(--ink); font-weight: 600; }
+
 /* The prompt as GPT-2 read it, each token tinted amber by how unexpected it was: none below 2 bits, strongest
    from 14. Every step keeps ink text above 4.5:1 on the dock surface in both themes. */
 .surprise { --tint-1: 15%; --tint-2: 29%; --tint-3: 45%; --tint-4: 62%; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 18px; margin-top: 8px; padding: 0 14px; }
@@ -86,13 +92,29 @@ canvas.weights.is-loading { opacity: .15; }
 .embedding-stack { display: grid; gap: 12px; margin-top: 16px; }
 
 .block-strip { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 6px; }
-.block-tile, .head-tile { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 5px 5px; border: 0; border-radius: 10px; background: var(--well); color: var(--ink-3); font-size: 11.5px; font-weight: 650; transition: background-color .2s, box-shadow .25s var(--ease-out), color .2s, transform .25s var(--ease-out); }
+.block-tile, .head-tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 5px 5px; border: 0; border-radius: 10px; background: var(--well); color: var(--ink-3); font-size: 11.5px; font-weight: 650; transition: background-color .2s, box-shadow .25s var(--ease-out), color .2s, transform .25s var(--ease-out); }
 .block-tile:hover, .head-tile:hover { background: var(--well-hover); color: var(--ink); }
 .block-tile:active, .head-tile:active { transform: scale(.95); }
 .block-tile[aria-selected='true'], .head-tile[aria-selected='true'] { background: var(--surface); color: var(--ink); box-shadow: inset 0 0 0 2px var(--ink); }
-.block-tile canvas, .head-tile canvas { display: block; width: 100%; aspect-ratio: 1; border-radius: 4px; image-rendering: pixelated; background: repeating-linear-gradient(135deg, var(--well-hover) 0 2px, transparent 2px 4px); }
+.tile-map { position: relative; display: block; width: 100%; }
+.block-tile canvas, .head-tile canvas { display: block; width: 100%; aspect-ratio: 1; border-radius: 4px; image-rendering: pixelated; background: repeating-linear-gradient(135deg, var(--well-hover) 0 2px, transparent 2px 4px); transition: opacity .25s; }
+/* A switched-off head, or a block with every head off: its pattern fades under a slash and its number is struck through. */
+.block-tile.is-off canvas, .head-tile.is-off canvas { opacity: .25; }
+.block-tile.is-off .tile-map::after, .head-tile.is-off .tile-map::after { content: ''; position: absolute; inset: 0; background: linear-gradient(to top right, transparent calc(50% - 1px), var(--ink-2) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 1px)); pointer-events: none; }
+.block-tile.is-off > span:not([class]), .head-tile.is-off > span:not([class]) { text-decoration: line-through; text-decoration-thickness: 1.5px; }
+/* How many of a block's heads are off. */
+.off-count { position: absolute; top: 2px; right: 2px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px; background: var(--ink); color: var(--on-ink); font-size: 10.5px; font-weight: 700; line-height: 17px; text-align: center; pointer-events: none; }
 .block-detail { display: grid; grid-template-columns: 196px minmax(0, 1fr); gap: 22px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
 .head-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.block-toggle { margin-top: 2px; }
+.head-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.transformer-flow .head-heading h3 { margin: 0; }
+.head-state { display: inline-flex; align-items: center; height: 24px; padding: 0 9px; border: 1px dashed var(--ink-3); border-radius: 99px; color: var(--ink-2); font-size: 12px; font-weight: 600; white-space: nowrap; }
+/* The effect, beside the toggle, where the prediction isn't in view: below the blocks, or above them on phones. */
+.head-effect { display: none; }
+.head-note { margin-bottom: 16px; }
+/* A switched-off head's output is all zeros: left unpainted, it shows the empty hatching. */
+#head-output-figure.is-off figcaption span { color: var(--ink-2); font-weight: 600; }
 .qkv-grid, .attention-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start; }
 .attention-grid { margin-top: 14px; }
 .attention-readout { min-height: 1.5em; margin-top: 10px; color: var(--ink-2); font-size: 13.5px; }
@@ -108,6 +130,23 @@ canvas.weights.is-loading { opacity: .15; }
 .candidate.is-filtered .candidate-bar i { background: var(--ink-3); }
 .candidate-value { color: var(--ink-2); font-size: 12.5px; text-align: right; }
 .sampling-summary { margin: 12px 0 4px; color: var(--ink-2); font-size: 13px; }
+
+/* With heads off: each bar keeps the part both runs share in ink; what a token gained since every head was on is
+   violet, what it lost is hatched amber. The numbers say the same, so color is never the only cue. */
+.ablation-summary { margin: 0 0 10px; color: var(--ink); font-size: 13.5px; font-weight: 500; line-height: 1.45; }
+.ablation-summary:empty { margin: 0; }
+.comparison-key { margin: 0 0 8px; color: var(--ink-3); font-size: 12px; line-height: 1.5; }
+.comparison-key i { display: inline-block; width: 14px; height: 8px; margin: 0 5px 0 3px; border-radius: 2px; }
+.key-gain, .candidate-bar b.is-gain { background: var(--signal-positive); }
+.key-loss, .candidate-bar b.is-loss { background: repeating-linear-gradient(135deg, var(--signal-negative) 0 1.5px, transparent 1.5px 4px); box-shadow: inset 0 0 0 1px var(--signal-negative); }
+.candidate-bar { position: relative; }
+.candidate-bar b { position: absolute; top: 0; bottom: 0; left: 0; width: 0; transition: left .45s var(--ease-out), width .45s var(--ease-out); }
+.candidate-list.is-compared .candidate { grid-template-columns: minmax(0, 72px) minmax(0, 1fr) auto; }
+.candidate-list.is-compared .candidate-bar i { border-radius: 5px 0 0 5px; }
+.candidate-list.is-compared .candidate-value { white-space: nowrap; }
+/* Tokens that led with every head on but fell out of the ten. */
+.candidate:not(.is-dropped) + .candidate.is-dropped { position: relative; margin-top: 9px; }
+.candidate:not(.is-dropped) + .candidate.is-dropped::before { content: ''; position: absolute; top: -5px; right: 6px; left: 6px; border-top: 1px dashed var(--line-strong); }
 
 /* How the guess forms: the prediction read out after the embedding and after every block. */
 .lens { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); container-type: inline-size; }
@@ -133,6 +172,25 @@ button.lens-row:hover, .lens-row[aria-current='true'] { background: var(--well);
   .lens-row { grid-template-columns: 76px minmax(0, 120px) minmax(0, 1fr) 50px; gap: 10px; }
 }
 
+/* Which heads matter: each head switched off alone, blocks down and heads across. */
+.importance { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.transformer-flow .importance h3 { margin-bottom: 2px; }
+.importance-context { margin-bottom: 10px; color: var(--ink-2); font-size: 13px; }
+.importance-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-height: 32px; }
+.importance-progress { color: var(--ink-3); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.importance-map { margin-top: 12px; }
+.importance-grid { display: grid; grid-template-columns: 18px repeat(12, minmax(0, 1fr)); gap: 2px; max-width: 340px; }
+.importance-label { align-self: center; color: var(--ink-3); font-size: 9.5px; font-weight: 600; line-height: 1; text-align: center; font-variant-numeric: tabular-nums; }
+.importance-cell { position: relative; min-width: 0; aspect-ratio: 1; padding: 0; border: 0; border-radius: 3px; background: repeating-linear-gradient(135deg, var(--well) 0 2px, transparent 2px 4px); }
+.importance-cell.is-known { background-image: none; box-shadow: inset 0 0 0 1px var(--line); }
+.importance-cell:hover, .importance-cell:focus-visible { z-index: 1; outline: 2px solid var(--ink); outline-offset: 1px; }
+/* The head open in the detail view, and switched-off heads, marked as in the heads grid. */
+.importance-cell.is-open { box-shadow: inset 0 0 0 2px var(--ink), inset 0 0 0 3px var(--surface); }
+.importance-cell.is-off::after { content: ''; position: absolute; inset: 0; background: linear-gradient(to top right, transparent calc(50% - .75px), var(--ink) calc(50% - .75px) calc(50% + .75px), transparent calc(50% + .75px)); }
+.importance-legend { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: var(--ink-3); font-size: 12px; }
+.importance-ramp { flex: 0 1 96px; height: 8px; border-radius: 99px; background: linear-gradient(90deg, var(--signal-negative), var(--signal-neutral), var(--signal-positive)); background: linear-gradient(in oklab 90deg, var(--signal-negative), var(--signal-neutral), var(--signal-positive)); box-shadow: inset 0 0 0 1px var(--line); }
+.importance-readout { min-height: 2.9em; margin-top: 8px; color: var(--ink-2); font-size: 13px; line-height: 1.45; }
+
 .transformer-guide .guide-card h3 { margin-top: 0; }
 
 @keyframes token-in { from { opacity: 0; transform: translateX(-10px) scale(.96); } }
@@ -141,6 +199,7 @@ button.lens-row:hover, .lens-row[aria-current='true'] { background: var(--well);
   .transformer-flow { grid-template-columns: 250px minmax(0, 1fr); }
   .transformer-flow > :last-child { grid-column: 1 / -1; }
   .stage-body { padding-left: 16px; padding-right: 16px; }
+  .head-effect:not(:empty) { display: block; margin: -4px 0 16px; color: var(--ink); font-size: 13.5px; font-weight: 500; line-height: 1.45; }
 }
 @media (max-width: 900px) {
   .block-detail { grid-template-columns: minmax(0, 1fr); }

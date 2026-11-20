@@ -28,6 +28,7 @@
     <defs>
       <symbol id="i-network" viewBox="0 0 24 24"><path d="m6 7 6 5 6-5M6 17l6-5 6 5"/><circle cx="4" cy="5" r="2"/><circle cx="4" cy="19" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="20" cy="19" r="2"/></symbol>
       <symbol id="i-digits" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M9.2 9.6c.5-1.9 5.4-2.1 5.4.6 0 2.3-4.2 3.6-5.6 5.9h5.9"/></symbol>
+      <symbol id="i-autoencoder" viewBox="0 0 24 24"><path d="M3.5 5 10 9.5v5L3.5 19zM20.5 5 14 9.5v5l6.5 4.5z"/><circle cx="12" cy="12" r="1.1"/></symbol>
       <symbol id="i-recurrent" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.6 3.9v4.4h-4.4"/><circle cx="12" cy="12" r="2.2"/></symbol>
       <symbol id="i-attention" viewBox="0 0 24 24"><circle cx="4.5" cy="17.5" r="2"/><circle cx="12" cy="17.5" r="2"/><circle cx="19.5" cy="17.5" r="2"/><path d="M4.5 15.2c.6-7.4 14.4-7.4 15 0M12 15.2c.4-4 7.1-4 7.5 0"/></symbol>
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
@@ -55,6 +56,7 @@
         <span class="nav-indicator" aria-hidden="true"></span>
         <a class="nav-button" href="/" aria-label="Playground" data-model="playground"><svg class="icon" aria-hidden="true"><use href="#i-network"/></svg><span>Playground</span></a>
         <a class="nav-button" href="/cnn/" aria-label="Digits" data-model="cnn"><svg class="icon" aria-hidden="true"><use href="#i-digits"/></svg><span>Digits</span></a>
+        <a class="nav-button" href="/vae/" aria-label="Autoencoder" data-model="vae"><svg class="icon" aria-hidden="true"><use href="#i-autoencoder"/></svg><span>Autoencoder</span></a>
         <a class="nav-button" href="/rnn/" aria-label="Recurrent" data-model="rnn"><svg class="icon" aria-hidden="true"><use href="#i-recurrent"/></svg><span>Recurrent</span></a>
         <a class="nav-button is-active" href="/transformer/" aria-current="page" aria-label="Transformer" data-model="transformer"><svg class="icon" aria-hidden="true"><use href="#i-attention"/></svg><span>Transformer</span></a>
       </nav>
@@ -109,6 +111,7 @@
           <option>Once upon a time, there was a little robot who</option>
           <option>A neural network learns by</option>
           <option>In the middle of the night, she heard</option>
+          <option>When Mary and John went to the store, John gave a drink to</option>
           <option>def fibonacci(n):</option>
         </select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
         <button id="generate-button" class="button primary generate-button" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#i-sparkle"/></svg><span>Generate</span></button>
@@ -141,6 +144,10 @@
           </div>
         </div>
       </div>
+      <div id="ablation" class="ablation" hidden>
+        <p class="ablation-state"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="m6.4 17.6 11.2-11.2"/></svg><span><span id="ablation-count" class="ablation-count">1 head switched off</span> <span id="ablation-where">in block 1</span></span></p>
+        <button id="restore-heads" class="button secondary small" type="button">Turn all back on</button>
+      </div>
     </section>
 
     <div id="transformer-flow" class="transformer-flow is-empty" aria-busy="true">
@@ -166,9 +173,16 @@
               <h3>Attention heads <span id="heads-caption">in block 1</span></h3>
               <div id="head-grid" class="head-grid" role="tablist" aria-label="Attention head"></div>
               <p class="callout-note">Each <strong>head</strong> looks for something different. Choose one to open it.</p>
+              <button id="block-toggle" class="button subtle small block-toggle" type="button">Switch off block 1</button>
             </div>
             <div class="head-detail">
-              <h3 id="head-title">Head 1</h3>
+              <div class="head-heading">
+                <h3 id="head-title">Head 1</h3>
+                <span id="head-state" class="head-state" hidden>Switched off</span>
+                <button id="head-toggle" class="button secondary small head-toggle" type="button">Switch off this head</button>
+              </div>
+              <p class="callout-note head-note">Switch off a head to see what it was <strong>contributing</strong>. Its output is replaced by zeros; everything after it is recomputed.</p>
+              <p id="head-effect" class="head-effect"></p>
               <div class="qkv-grid">
                 <figure><figcaption>Query <span>Q = X · W<sub>Q</sub></span></figcaption><canvas id="query-matrix" class="matrix rows"></canvas></figure>
                 <figure><figcaption>Key <span>K = X · W<sub>K</sub></span></figcaption><canvas id="key-matrix" class="matrix rows"></canvas></figure>
@@ -184,7 +198,7 @@
               <div class="attention-grid">
                 <figure><figcaption>Scores <span>Q·Kᵀ / √64, future masked</span></figcaption><canvas id="score-matrix" class="matrix square"></canvas></figure>
                 <figure><figcaption>Attention <span>softmax of each row</span></figcaption><canvas id="attention-matrix" class="matrix square"></canvas></figure>
-                <figure><figcaption>Output <span>attention · V</span></figcaption><canvas id="head-output" class="matrix rows"></canvas></figure>
+                <figure id="head-output-figure"><figcaption>Output <span id="head-output-note">attention · V</span></figcaption><canvas id="head-output" class="matrix rows"></canvas></figure>
               </div>
               <p id="attention-readout" class="attention-readout" aria-live="polite"></p>
             </div>
@@ -196,6 +210,8 @@
       <section class="panel stage" aria-labelledby="probability-heading">
         <div class="panel-heading"><h2 id="probability-heading">Next token</h2></div>
         <div class="stage-body">
+          <p id="ablation-summary" class="ablation-summary" aria-live="polite"></p>
+          <p id="comparison-key" class="comparison-key" hidden>Before temperature and sampling: <i class="key-gain" aria-hidden="true"></i>gained and <i class="key-loss" aria-hidden="true"></i>lost since every head was on.</p>
           <ol id="candidate-list" class="candidate-list" aria-label="Most likely next tokens"></ol>
           <p id="sampling-summary" class="sampling-summary"></p>
           <p class="callout-note">Lower the <strong>temperature</strong> for safer choices; raise it for surprises.</p>
@@ -206,6 +222,21 @@
             <ol id="lens-list" class="lens-list" aria-labelledby="lens-heading" aria-describedby="lens-context"></ol>
             <p class="callout-note"><strong>Early blocks</strong> guess loosely. Watch the answer settle by the last block.</p>
           </section>
+          <section id="importance" class="importance" aria-labelledby="importance-heading">
+            <h3 id="importance-heading">Which heads matter</h3>
+            <p id="importance-context" class="importance-context">Switch off each head on its own and see how the top guess changes.</p>
+            <div class="importance-actions">
+              <button id="importance-start" class="button secondary small" type="button">Test every head</button>
+              <button id="importance-stop" class="button subtle small" type="button" hidden>Stop</button>
+              <span id="importance-progress" class="importance-progress" role="status"></span>
+            </div>
+            <div id="importance-map" class="importance-map" hidden>
+              <div id="importance-grid" class="importance-grid" role="group" aria-label="Each head switched off alone, block by block"></div>
+              <p class="importance-legend" aria-hidden="true"><span id="importance-lower">Lowers it</span><i class="importance-ramp"></i><span>Raises it</span></p>
+              <p id="importance-readout" class="importance-readout"></p>
+            </div>
+            <p class="callout-note"><strong>Amber</strong> heads were helping the top guess; <strong>violet</strong> ones were holding it back. Choose one to open it.</p>
+          </section>
         </div>
       </section>
     </div>
@@ -214,7 +245,7 @@
       <div class="section-intro"><h2 id="guide-heading">From words to a prediction.</h2><p>GPT-2 repeats one recipe twelve times, then turns its last vector into a probability for every token it knows.</p></div>
       <div class="guide-grid">
         <section class="guide-card"><h3>Tokens and embeddings</h3><p>Text is split into tokens: whole words, pieces of words, or punctuation. Each token looks up a learned vector of 768 numbers, and a second vector records its position.</p></section>
-        <section class="guide-card"><h3>Attention</h3><p>Each head compares a token's query with every earlier token's key. The softmax of those scores decides how much of each value flows forward. Future tokens are masked, so the model can't peek ahead.</p></section>
+        <section class="guide-card"><h3>Attention</h3><p>Each head compares a token's query with every earlier token's key. The softmax of those scores decides how much of each value flows forward. Future tokens are masked, so the model can't peek ahead.</p><p>Switch a head off to test what it does. In the Mary and John example, block 12, head 11 looks at “Mary”, yet without it “Mary” rises from 45% to 73%: the head was arguing against the answer.</p></section>
         <section class="guide-card"><h3>MLP and the next word</h3><p>An MLP then reshapes every token's vector on its own. After twelve blocks, the last vector is compared with all 50,257 token embeddings to score what comes next.</p></section>
       </div>
       <details class="credits"><summary>Model and credits<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>

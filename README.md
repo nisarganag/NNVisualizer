@@ -1,9 +1,10 @@
 # Neural Network Visualizer
 
-Four interactive neural networks you can look inside, in the browser:
+Five interactive neural networks you can look inside, in the browser:
 
 - **Playground**: build and train a small network, with the learning features of [TensorFlow Playground](https://github.com/tensorflow/playground).
 - **Digits**: draw a digit and watch a convolutional network trained on MNIST read it, filter by filter.
+- **Autoencoder**: explore a map on which every point is a handwritten digit, and drag across it to watch one digit turn into another.
 - **Recurrent**: watch an LSTM read your text one character at a time, carrying its memory forward, and see how far back it remembers.
 - **Transformer**: run the real GPT-2 small and follow a prompt through tokens, embeddings, every attention head and MLP, to the next-word probabilities.
 
@@ -94,6 +95,20 @@ Hover over a connection or a neuron's small bias square and click to edit it. Ed
 - **Fool the network**: pick a digit and the page flips a few pixels of what the network sees, one small step at a time, until it reads that digit, usually after about 18 pixel changes. Changed pixels are outlined, and Undo restores the original.
 - About 52,000 parameters, trained in this repository on MNIST with rotation, scale, shift and stroke-width augmentation (`scripts/train-mnist-cnn.mjs`). Nothing you draw leaves the browser.
 
+### Autoencoder
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/autoencoder-preview-dark.png">
+  <img alt="The Autoencoder page: a map of 5,000 handwritten test digits placed by their two numbers, with the digit drawn at the chosen point" src="docs/autoencoder-preview.png">
+</picture>
+
+- A variational autoencoder trained on MNIST squeezes every digit into just two numbers, so every digit has a place on a 2D map, and its decoder can draw a digit from any point on it.
+- **The map**: 5,000 test digits the network never trained on, as dots, with a numeral where each digit is most common. Or switch to the decoded grid, which draws the whole plane as digits that blend into each other.
+- **The point**: drag it, tap the map, or move it with the arrow keys. The digit at that point is drawn live, along with what the Digits page's network reads it as.
+- **Morph**: animate from one digit to another, or to your own drawing. Every step is drawn from its own two numbers, not two pictures faded into each other.
+- **Scratchpad**: draw a digit, or try an example, to see where it lands on the map and how the decoder redraws it from two numbers.
+- Trained in this repository with `scripts/train-mnist-vae.mjs`: an encoder of 784, 256 and 128 units down to two numbers, and a decoder back up to 784 pixels, 469,000 parameters in all. Digits that look alike overlap on the map (4, 9 and 5 most of all); a vote among each test digit's five nearest neighbors on the map names 81.6% of them correctly, and the Digits network reads 82% of the reconstructions correctly. The weights take 1.9 MB.
+
 ### Recurrent
 
 <picture>
@@ -105,22 +120,24 @@ Hover over a connection or a neuron's small bias square and click to edit it. Ed
 - Each character is tinted by how surprising it was. Hover, focus or tap one (or move with the arrow keys) to see what the network expected next, at the temperature you set, and where the real next character ranked.
 - **Next character**: its ten likeliest next characters, each with the word it would lead to if the network kept taking its likeliest letter. After "the Tin Woodman " it expects *said*, *and* or *was*; after "the Tin Wood" it is sure of *Woodman*. A score shows how often it was right on your text, and that the start of a word, where it has to choose the next word, is the hard part.
 - **Memory**: a heatmap of all 256 cell states at every step (violet above zero, amber below), and a second map of the hidden state or the input, forget and output gates. Choose a row to trace that cell's memory and gates along the text.
-- **Memory span**: for the chosen step, how much each earlier character shaped the guess (the exact gradient back through time, times the input), and how many of the latest characters hold half and 90% of it. On held-out text, half usually comes from the last 4 characters and 90% from the last 17.
+- **Memory span**: for the chosen step, how much each earlier character shaped the guess (the exact gradient back through time, times the input), and how many of the latest characters hold half and 90% of it. On held-out text, half usually comes from the last 4 characters and 90% from the last 15.
 - Cells that learned something recognizable are one click away: one tracks whether the text is inside a quotation (correlation −0.74 on held-out text), another counts the letters of the current word.
+- **Why gates matter**: a gateless recurrent network with about as many weights (512 memory numbers instead of 256) reads the same text beside the LSTM, with its own surprise, memory span and accuracy. Up close the two lean on the last few characters alike; further back they part. 100 characters back, a character still pulls 10 times harder on the LSTM's guess, and 150 back 110 times, as a fade chart shows. The LSTM's cell 188 follows whether the text is inside a quotation (r = −0.74 on held-out text), while the gateless network's closest unit reaches only −0.29. Both can continue your text side by side. Trained the same way on the same books, the gateless network scores 1.85 bits per character against the LSTM's 1.77.
 - **Generate** writes 120 more characters at about 30 a second, each picked from the five likeliest at the chosen temperature (0.6 by default), and can be stopped at any point. About 98% of the words it writes are real, but its sentences don't make sense: a network this small learns how English looks, not what it means.
-- Trained in this repository with `scripts/train-char-lstm.mjs` on nineteen public-domain children's books from Project Gutenberg (5.1 million characters), from *Alice's Adventures in Wonderland* and *The Wonderful Wizard of Oz* to *The Jungle Book*, *Treasure Island* and the fairy tales of the Brothers Grimm and Hans Christian Andersen. Paragraphs with period slurs are left out of training. On the last 5% of each book, which it never trained on, it scores 1.77 bits per character and its first guess is right 62% of the time (82% within three guesses). Training takes about 1¾ hours on a 10-core M4; the weights take 1.4 MB.
+- Trained in this repository with `scripts/train-char-lstm.mjs` on nineteen public-domain children's books from Project Gutenberg (5.1 million characters), from *Alice's Adventures in Wonderland* and *The Wonderful Wizard of Oz* to *The Jungle Book*, *Treasure Island* and the fairy tales of the Brothers Grimm and Hans Christian Andersen. Paragraphs with period slurs are left out of training. On the last 5% of each book, which it never trained on, it scores 1.77 bits per character and its first guess is right 63% of the time (82% within three guesses). Training takes about 1¾ hours on a 10-core M4; the weights take 1.4 MB.
 
 ### Transformer
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/transformer-preview-dark.png">
-  <img alt="The Transformer page: GPT-2 small predicting the word after 'The capital of France is', with block 6, head 9 open" src="docs/transformer-preview.png">
+  <img alt="The Transformer page: GPT-2 small reading 'When Mary and John went to the store, John gave a drink to' with block 12, head 11 switched off, so 'Mary' rises from 45% to 73%" src="docs/transformer-preview.png">
 </picture>
 
 - GPT-2 small (124M parameters, OpenAI, MIT license) with its byte-level BPE tokenizer. Type any prompt or choose an example; the model loads with one click and is cached afterwards.
 - Views for tokens and IDs, token and position embeddings, a 12-block overview, the 12 heads of any block, and for any head its queries, keys, values, weights, masked scaled scores, softmax attention and output. Also every token's 3,072 MLP activations, the final hidden state, and the next-token probabilities.
 - Temperature, top-k and top-p update the probabilities instantly; **Generate** samples a token and appends it.
 - **How the guess forms**: what GPT-2 would predict if it stopped after the embedding and after each of the 12 blocks (a "logit lens"), for any token you focus. Select a row to open that block.
+- **Switch off heads**: switch off any attention head, or a whole block, and see how the prediction changes. Each candidate shows its probability with every head on and now, and a sentence sums up the biggest change. **Which heads matter** switches off each of the 144 heads alone and maps how much each one helps or holds back the top guess (about a second on the GPU; on the CPU it tests the open block's 12). On "When Mary and John went to the store, John gave a drink to", switching off block 1, head 1 drops " Mary" from 45% to 11%, while switching off block 12, head 11 raises it to 73%. That head, and block 11, head 8, are the "negative name movers" that interpretability research found in GPT-2 small for sentences like this (Wang et al., 2022).
 - **Surprising words**: the prompt is tinted by how unexpected each token was to the model, in bits, so typos and odd word choices stand out.
 - **Runs on your GPU**: where the browser supports WebGPU, the worker runs GPT-2 with its own WGSL kernels (8-bit matrix products, layer norm, attention, the vocabulary and the surprise statistics) and keeps keys and values on the GPU. Everything the page draws comes from that run, and it matches the CPU path to within rounding: logits within 1e-4, the same top tokens, the same greedy continuation. On an Apple M4, measured in the page, a 9-token prompt takes about 27 ms instead of 0.75 s, a 45-token prompt 75 ms instead of 3.7 s, the logit lens 11 ms instead of 0.36 s, and each generated token about 10 ms instead of 87 ms. Browsers without WebGPU, and any GPU that fails a start-up check against the CPU, use the TypeScript path. A line under the prompt says which processor runs and how long the last run took, with a switch to compare them; `?backend=cpu` starts on the CPU.
 - The official weights are converted with `scripts/convert-gpt2.mjs` to 8-bit blocks of 64 with float16 scales. Eight embedding columns are kept exact, because GPT-2's final hidden state has a few outsized dimensions that would otherwise magnify rounding. Greedy decoding matches the float32 model token for token, and next-token probabilities stay within about 0.3 percentage points.
@@ -156,9 +173,10 @@ flowchart LR
 | `src/studio.ts` | Playground shortcuts, clipboard sharing/fallback, and native control presentation |
 | `index.html`, `styles.css` | Playground page; shared theme tokens, typography, SVG icons, motion, and responsive design |
 | `cnn/index.html`, `src/cnn/` | Digits page: drawing pad, preprocessing and inference (`model.ts`), layer views |
+| `vae/index.html`, `src/vae/` | Autoencoder page: encoder and decoder (`model.ts`), the map, morphing and the scratchpad |
 | `rnn/index.html`, `src/rnn/` | Recurrent page: text encoding, LSTM inference and backpropagation through time (`model.ts`), memory views |
 | `transformer/index.html`, `src/transformer/` | Transformer page: tokenizer, GPT-2 inference in a worker on the CPU (`gpt2.ts`) or the GPU through WebGPU (`gpu.ts`), sampling, stage views |
-| `scripts/` | Reproducible model conversion (GPT-2) and training (MNIST CNN, character LSTM); downloaded data stays outside the repository |
+| `scripts/` | Reproducible model conversion (GPT-2) and training (MNIST CNN, MNIST autoencoder, character LSTM); downloaded data stays outside the repository |
 | `public/models/` | Versioned model files served with the site |
 
 Only one automatic training request is in flight at a time. Each reset, data change, or parameter edit invalidates older snapshots. Manual epoch steps are queued explicitly. Each epoch preserves the reference's partial-batch accumulation and half-squared error, including its fixed Tanh classification output and linear regression output. Numerical divergence pauses training with a recovery message.

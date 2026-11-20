@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f3f4f9">
+  <meta name="description" content="A variational autoencoder trained on MNIST squeezes every handwritten digit into two numbers. Drag a point across the map of all digits and watch one turn into another.">
+  <meta property="og:title" content="Autoencoder — Neural Network Visualizer">
+  <meta property="og:description" content="Explore the space between digits.">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <title>Autoencoder — Neural Network Visualizer</title>
+  <script>
+    // Apply the saved or system theme before the first paint to avoid a flash.
+    (function () {
+      var theme;
+      try { theme = localStorage.getItem('nnvisualizer-theme'); } catch (error) { theme = null; }
+      if (theme !== 'light' && theme !== 'dark') {
+        theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      document.documentElement.dataset.theme = theme;
+      document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#0f121e' : '#f3f4f9';
+    })();
+  </script>
+</head>
+<body class="page-vae">
+  <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs>
+      <symbol id="i-network" viewBox="0 0 24 24"><path d="m6 7 6 5 6-5M6 17l6-5 6 5"/><circle cx="4" cy="5" r="2"/><circle cx="4" cy="19" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="20" cy="19" r="2"/></symbol>
+      <symbol id="i-digits" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M9.2 9.6c.5-1.9 5.4-2.1 5.4.6 0 2.3-4.2 3.6-5.6 5.9h5.9"/></symbol>
+      <symbol id="i-autoencoder" viewBox="0 0 24 24"><path d="M3.5 5 10 9.5v5L3.5 19zM20.5 5 14 9.5v5l6.5 4.5z"/><circle cx="12" cy="12" r="1.1"/></symbol>
+      <symbol id="i-recurrent" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.6 3.9v4.4h-4.4"/><circle cx="12" cy="12" r="2.2"/></symbol>
+      <symbol id="i-attention" viewBox="0 0 24 24"><circle cx="4.5" cy="17.5" r="2"/><circle cx="12" cy="17.5" r="2"/><circle cx="19.5" cy="17.5" r="2"/><path d="M4.5 15.2c.6-7.4 14.4-7.4 15 0M12 15.2c.4-4 7.1-4 7.5 0"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-eraser" viewBox="0 0 24 24"><path d="m14.5 4.5 5 5-9 9H6l-2.5-2.5a1.4 1.4 0 0 1 0-2z"/><path d="M10 18.5h10M9 9l6 6"/></symbol>
+      <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M3 6h3c5 0 7 12 12 12h3m-4-4 4 4-4 4M3 18h3c2 0 3-2 5-5m3-5c1-1 2-2 4-2h3m-4-4 4 4-4 4"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8.5 5.6v12.8a1 1 0 0 0 1.5.86l10.2-6.4a1 1 0 0 0 0-1.72L10 4.74a1 1 0 0 0-1.5.86z" fill="currentColor" stroke="none"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1.2" fill="currentColor" stroke="none"/><rect x="13.5" y="5" width="4" height="14" rx="1.2" fill="currentColor" stroke="none"/></symbol>
+    </defs>
+  </svg>
+  <noscript><p class="noscript">Enable JavaScript to explore the map of digits.</p></noscript>
+
+  <header class="app-header">
+    <div class="header-inner">
+      <a class="brand" href="/" aria-label="Neural Network Visualizer home">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <defs><clipPath id="brand-clip"><circle cx="16" cy="16" r="14"/></clipPath></defs>
+          <g clip-path="url(#brand-clip)">
+            <rect class="mark-negative" width="32" height="32"/>
+            <path class="mark-positive" d="M0 0h32v8.5c-8.2 1-10.6 10.9-19.6 13.6C8 23.4 3.6 23.3 0 22.4z"/>
+            <circle class="mark-point" cx="22.5" cy="8.5" r="2.1"/>
+          </g>
+        </svg>
+        <span class="brand-name">Neural Network Visualizer</span>
+      </a>
+      <nav class="main-nav" aria-label="Models">
+        <span class="nav-indicator" aria-hidden="true"></span>
+        <a class="nav-button" href="/" aria-label="Playground" data-model="playground"><svg class="icon" aria-hidden="true"><use href="#i-network"/></svg><span>Playground</span></a>
+        <a class="nav-button" href="/cnn/" aria-label="Digits" data-model="cnn"><svg class="icon" aria-hidden="true"><use href="#i-digits"/></svg><span>Digits</span></a>
+        <a class="nav-button is-active" href="/vae/" aria-current="page" aria-label="Autoencoder" data-model="vae"><svg class="icon" aria-hidden="true"><use href="#i-autoencoder"/></svg><span>Autoencoder</span></a>
+        <a class="nav-button" href="/rnn/" aria-label="Recurrent" data-model="rnn"><svg class="icon" aria-hidden="true"><use href="#i-recurrent"/></svg><span>Recurrent</span></a>
+        <a class="nav-button" href="/transformer/" aria-label="Transformer" data-model="transformer"><svg class="icon" aria-hidden="true"><use href="#i-attention"/></svg><span>Transformer</span></a>
+      </nav>
+      <div class="header-actions">
+        <button id="theme-toggle" class="icon-button theme-toggle" type="button" aria-label="Dark theme" aria-pressed="false" title="Switch to dark theme">
+          <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <mask id="theme-moon-mask"><rect width="24" height="24" fill="#fff"/><circle class="moon-bite" cx="17.5" cy="6.5" r="6" fill="#000"/></mask>
+            <circle class="sun-core" cx="12" cy="12" r="5" mask="url(#theme-moon-mask)"/>
+            <g class="sun-rays"><path d="M12 2.6v1.9M12 19.5v1.9M21.4 12h-1.9M4.5 12H2.6M18.65 5.35l-1.35 1.35M6.7 17.3l-1.35 1.35M18.65 18.65 17.3 17.3M6.7 6.7 5.35 5.35"/></g>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <section class="workspace-intro" aria-labelledby="vae-heading">
+      <div class="intro-copy">
+        <h1 id="vae-heading">Explore the space between digits.</h1>
+        <p class="intro-description">A small network squeezes every handwritten digit into just two numbers, and learns to draw a digit from any two numbers. So every point on this map is a digit: drag the point and watch one digit turn into another.</p>
+      </div>
+    </section>
+
+    <div id="vae-workbench" class="vae-workbench is-loading" aria-busy="true">
+      <section class="panel map-panel" aria-labelledby="map-heading">
+        <div class="panel-heading">
+          <h2 id="map-heading">Map</h2>
+          <div class="segmented" role="radiogroup" aria-label="Map view">
+            <button type="button" role="radio" aria-checked="true" data-view="codes">Test digits</button>
+            <button type="button" role="radio" aria-checked="false" data-view="grid">Decoded grid</button>
+          </div>
+        </div>
+        <div class="stage-body">
+          <div id="map-frame" class="map-frame">
+            <canvas id="map-canvas" class="map-canvas" aria-hidden="true"></canvas>
+            <span class="axis-label axis-x" aria-hidden="true"><i>z</i><sub>1</sub></span>
+            <span class="axis-label axis-y" aria-hidden="true"><i>z</i><sub>2</sub></span>
+            <div id="probe" class="probe" role="slider" tabindex="0" aria-label="Point on the map" aria-describedby="probe-help" aria-orientation="horizontal" aria-valuemin="-4" aria-valuemax="4" aria-valuenow="0" aria-valuetext="Loading"></div>
+          </div>
+          <p id="probe-help" class="map-help">Drag the point, tap anywhere on the map, or focus the point and use the arrow keys (hold Shift for bigger steps).</p>
+          <div class="map-footer">
+            <p class="map-key"><span class="key-item"><span class="key-dot" aria-hidden="true"></span><span id="code-count">5,000</span> test digits</span><span class="key-item"><span class="key-dot is-highlight" aria-hidden="true"></span>the digit you point at</span><span id="drawing-key" class="key-item" hidden><span class="key-ring" aria-hidden="true"></span>your drawing</span></p>
+            <div id="class-row" class="class-row" role="group" aria-label="Go to a digit"><span class="class-row-label" aria-hidden="true">Go to</span></div>
+          </div>
+          <p class="callout-note"><span class="when-codes">Each dot is a <strong>test digit</strong> the network never saw in training, placed at its two numbers. Digits that look alike land near each other.</span><span class="when-grid">Each tile is the digit the decoder draws at that spot. <strong>Every point is a digit</strong>, and neighbors look alike.</span></p>
+        </div>
+      </section>
+
+      <section class="panel decoded-panel" aria-labelledby="decoded-heading">
+        <div class="panel-heading"><h2 id="decoded-heading">At the point</h2></div>
+        <div class="stage-body">
+          <div class="decoded-main">
+            <canvas id="decoded-view" class="decoded-view" role="img" aria-label="The digit the decoder draws from the point’s two numbers, 28 by 28 pixels"></canvas>
+            <div class="decoded-readouts">
+              <p class="point-readout"><span><i>z</i><sub>1</sub> <span id="z1" class="readout">–</span></span><span><i>z</i><sub>2</sub> <span id="z2" class="readout">–</span></span></p>
+              <p id="looks-like" class="looks-like" aria-live="polite"><span class="looks-label">Looks like</span> <span id="looks-digit" class="looks-digit">?</span> <span id="looks-sure" class="looks-sure"></span></p>
+              <p class="looks-source">as read by the network on the <a href="/cnn/">Digits</a> page</p>
+            </div>
+          </div>
+          <section class="morph-section" aria-labelledby="morph-heading">
+            <h3 id="morph-heading">Morph</h3>
+            <p class="morph-intro">Slide the point from one place to another and watch the digit change on the way.</p>
+            <div class="morph-controls">
+              <div class="control"><label for="morph-from">From</label><div class="select"><select id="morph-from">
+                <option value="point">The point</option>
+                <option value="drawing" disabled>Your drawing</option>
+                <option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option>
+              </select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
+              <div class="control"><label for="morph-to">To</label><div class="select"><select id="morph-to">
+                <option value="drawing" disabled>Your drawing</option>
+                <option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option>
+              </select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
+              <button id="morph-start" class="button secondary morph-button" type="button" aria-pressed="false" disabled><svg class="icon play-icon" aria-hidden="true"><use href="#i-play"/></svg><svg class="icon stop-icon" aria-hidden="true"><use href="#i-pause"/></svg><span id="morph-label">Morph</span></button>
+            </div>
+            <ol id="morph-strip" class="morph-strip" aria-label="Steps along the way. Choose one to move the point there."></ol>
+            <p class="callout-note">Every step is drawn fresh from <strong>its own two numbers</strong>, not two pictures faded into each other.</p>
+          </section>
+        </div>
+      </section>
+
+      <section class="panel pad-panel" aria-labelledby="pad-heading">
+        <div class="panel-heading"><h2 id="pad-heading">Scratchpad</h2></div>
+        <div class="stage-body">
+          <div class="pad-frame">
+            <canvas id="draw-pad" class="draw-pad" aria-label="Drawing area. Draw a digit from 0 to 9 with a mouse, finger or pen; the point moves to where it lands on the map." role="img"></canvas>
+            <p id="pad-hint" class="pad-hint">Draw a digit here</p>
+          </div>
+          <div class="pad-actions">
+            <button id="clear-pad" class="button secondary" type="button"><svg class="icon" aria-hidden="true"><use href="#i-eraser"/></svg>Clear</button>
+            <button id="example-digit" class="button subtle" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#i-shuffle"/></svg>Try an example</button>
+          </div>
+          <p id="drawing-readout" class="drawing-readout" aria-live="polite">Draw a digit to see where it lands.</p>
+          <div class="pixel-views">
+            <figure><figcaption>What the encoder sees <span>28 × 28 pixels, centered like the training data</span></figcaption><canvas id="input-view" class="pixel-view" role="img" aria-label="Your drawing as the encoder sees it, 28 by 28 pixels"></canvas></figure>
+            <figure><figcaption>Drawn back from two numbers <span>All the decoder gets to work from</span></figcaption><canvas id="reconstruction-view" class="pixel-view" role="img" aria-label="Your drawing redrawn by the decoder from its two numbers, 28 by 28 pixels"></canvas></figure>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <article class="learning-section" aria-labelledby="vae-guide-heading">
+      <div class="section-intro"><h2 id="vae-guide-heading">Two numbers per digit.</h2><p>An autoencoder learns to squeeze its input into a few numbers and to rebuild the input from them. With only two numbers, every digit gets a place on a map.</p></div>
+      <div class="guide-grid">
+        <section class="guide-card"><h3>Squeezing a digit into two numbers</h3><p>The encoder reads all 784 pixels and boils them down to two numbers: a place on the map. Two numbers can’t hold every detail, so it keeps what tells digits apart most, mainly which digit it is and roughly how it’s written. Digits that look alike end up close together.</p></section>
+        <section class="guide-card"><h3>Drawing a digit from two numbers</h3><p>The decoder does the reverse. From any two numbers it draws a 28 × 28 image, giving every pixel a chance of ink. It learned by redrawing 60,000 training digits from their two numbers and being scored on how far each pixel was off.</p></section>
+        <section class="guide-card"><h3>Why the map is smooth</h3><p>This is the variational part. In training, the encoder gives a small cloud instead of an exact point, and the decoder has to redraw the digit from a random spot in that cloud, so nearby points must decode to similar digits. A second term, the KL divergence, pulls every cloud toward the middle, so the map has no empty gaps: wherever you put the point, there’s a digit.</p></section>
+      </div>
+      <details class="credits"><summary>Model and credits<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+        <p>The network is a variational autoencoder with <span id="parameter-total">469,268</span> parameters, trained for this site on the 60,000 training digits of the <a href="https://yann.lecun.com/exdb/mnist/">MNIST database</a> by Yann LeCun, Corinna Cortes and Christopher J. C. Burges (CC BY-SA 3.0). The dots are <span id="credits-count">5,000</span> digits from the MNIST test set, which it never trained on; for <span id="knn-score" class="readout">most</span> of them, most of their five nearest neighbors on the map are the same digit. The examples come from the test set too, and the “looks like” reading comes from the network on the <a href="/cnn/">Digits</a> page. Everything runs in your browser; nothing you draw leaves your device.</p>
+      </details>
+    </article>
+  </main>
+  <footer class="app-footer"><span class="footer-brand">Neural Network Visualizer<span>Built for the moment it clicks.</span></span><div><a href="/THIRD_PARTY_NOTICES.txt">Open-source licenses</a></div></footer>
+  <script type="module" src="/src/vae/main.ts"></script>
+</body>
+</html>

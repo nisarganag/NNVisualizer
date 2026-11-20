@@ -5,9 +5,9 @@ import * as d3 from 'd3';
 import { initializeSite, reducedMotion } from '../site';
 import { signalRange, THEME_CHANGE_EVENT } from '../palette';
 import { Gpt2Tokenizer } from './tokenizer';
-import { applySampling, sample, type SamplingResult, type SamplingSettings } from './sampling';
+import { applySampling, sample, softmax, type SamplingResult, type SamplingSettings } from './sampling';
 import { MAX_TOKENS, MODEL_BASE, MODEL_CACHE } from './config';
-import type { Backend, EngineState, GpuReason, LensRow, Trace, TransformerRequest, TransformerResponse } from './worker';
+import type { Backend, Baseline, EngineState, GpuReason, LensRow, Trace, TransformerRequest, TransformerResponse } from './worker';
 import type { Gpt2Manifest } from './gpt2';
 
 initializeSite();
@@ -17,6 +17,8 @@ const N_HEAD = 12;
 const EMBD = 768;
 const HEAD = EMBD / N_HEAD;
 const HIDDEN = 4 * EMBD;
+/** A block's mask with every head off. */
+const WHOLE_BLOCK = (1 << N_HEAD) - 1;
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const flow = $('transformer-flow');
@@ -44,9 +46,18 @@ let arriving = -1;
 let headWeights: { layer: number; head: number; q: Float32Array; k: Float32Array; v: Float32Array } | null = null;
 let requestId = 0;
 let pending = false;
-/** The run in flight and the latest one asked for meanwhile, each with the processor it should use. */
-let inFlight: { tokens: number[]; backend: Backend } | null = null;
-let queued: { tokens: number[]; backend: Backend } | null = null;
+/** A run: the tokens, the processor and the switched-off heads. */
+type Run = { tokens: number[]; backend: Backend; mask: number[] };
+/** The run in flight and the latest one asked for meanwhile. */
+let inFlight: Run | null = null;
+let queued: Run | null = null;
+/** The heads the visitor switched off: one bitmask per block, bit h for head h (see HeadMask in gpt2.ts). */
+let mask: number[] = new Array(N_LAYER).fill(0);
+/** The heads that were off for the trace shown. */
+let traceMask: number[] = mask.slice();
+/** With heads off, the same tokens with every head on: what the trace's prediction is compared against. */
+let baseline: Baseline | null = null;
+let comparison: Comparison | null = null;
 /**
  * The processor the visitor wants. `?backend=cpu` starts on the CPU; `?backend=gpu` insists on the GPU,
  * accepting a software one (such as SwiftShader), and still falls back when there is none.
@@ -58,7 +69,7 @@ let lastRun: { ms: number; fresh: number } | null = null;
 const settings: SamplingSettings = { temperature: .8, mode: 'top-k', k: 5, p: .9 };
 let result: SamplingResult | null = null;
 /** The latest logit lens, the tokens and position it reads, and the processor that computed it. */
-let lens: { tokens: number[]; position: number; rows: LensRow[]; backend: Backend } | null = null;
+let lens: { tokens: number[]; mask: number[]; position: number; rows: LensRow[]; backend: Backend } | null = null;
 let lensId = 0;
 let lensInFlight = false;
 let lensWanted = false;
@@ -160,13 +171,93 @@ const focusIndex = () => (trace ? (focus >= 0 && focus < trace.n ? focus : trace
 const displayToken = (id: number) => tokenizer?.tokenText(id) ?? '';
 const quoteToken = (id: number) => `“${displayToken(id).replace(/\n/g, '↵').trim() || '␣'}”`;
 const percent = (p: number) => (p < .001 ? '<0.1%' : `${(p * 100).toFixed(1)}%`);
+const ordinal = (n: number) => {
+  const suffixes = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return `${n.toLocaleString()}${suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0]}`;
+};
+/** "5", "5 and 9", "1, 5 and 9". */
+const inWords = (items: (string | number)[]) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
+
+/* ---------- Switched-off heads ---------- */
+
+const isOff = (bits: number[], l: number, h: number) => ((bits[l] >> h) & 1) === 1;
+const countBits = (bits: number) => {
+  let count = 0;
+  for (let b = bits; b; b &= b - 1) count++;
+  return count;
+};
+const countOff = (bits: number[]) => bits.reduce((total, block) => total + countBits(block), 0);
+const headCount = (n: number) => (n === N_LAYER * N_HEAD ? 'every head' : `${n} head${n === 1 ? '' : 's'}`);
+const sameRun = (a: Run, b: Run | null) => b !== null && a.backend === b.backend && a.tokens.join() === b.tokens.join() && a.mask.join() === b.mask.join();
+
+/** The prediction with every head on (p0) beside the trace's (p1), as probabilities before temperature and sampling. */
+interface Comparison {
+  p0: Float32Array;
+  p1: Float32Array;
+  /** The ten likeliest tokens of each, likeliest first. */
+  top0: number[];
+  top1: number[];
+}
+
+/** The k likeliest token ids, likeliest first. */
+function topIds(p: Float32Array, k: number): number[] {
+  const ids: number[] = [];
+  for (let i = 0; i < p.length; i++) {
+    if (ids.length === k && p[i] <= p[ids[k - 1]]) continue;
+    let at = ids.length;
+    while (at > 0 && p[ids[at - 1]] < p[i]) at--;
+    ids.splice(at, 0, i);
+    if (ids.length > k) ids.pop();
+  }
+  return ids;
+}
+
+/** A token's place among every possible next token; 1 is the likeliest. */
+function placeOf(p: Float32Array, id: number): number {
+  let place = 1;
+  for (let i = 0; i < p.length; i++) if (p[i] > p[id]) place++;
+  return place;
+}
+
+function compare(before: Float32Array, after: Float32Array): Comparison {
+  const p0 = softmax(before);
+  const p1 = softmax(after);
+  return { p0, p1, top0: topIds(p0, 10), top1: topIds(p1, 10) };
+}
+
+/** One sentence on the biggest change: the token whose probability moved most, and any new top guess. */
+function describeChange(c: Comparison, off: number): string {
+  const lead = `With ${headCount(off)} off`;
+  let mover = c.top0[0];
+  let change = 0;
+  for (const id of new Set([...c.top0, ...c.top1])) {
+    const delta = c.p1[id] - c.p0[id];
+    if (Math.abs(delta) > Math.abs(change)) {
+      mover = id;
+      change = delta;
+    }
+  }
+  const [was, now] = [c.top0[0], c.top1[0]];
+  if (now === was && Math.abs(change) < .001) return `${lead}, the prediction barely changed: no candidate moved by even 0.1 percentage points.`;
+  const moved = `${quoteToken(mover)} ${change < 0 ? 'fell' : 'rose'} from ${percent(c.p0[mover])} to ${percent(c.p1[mover])}`;
+  if (now !== was) {
+    return mover === now ? `${lead}, ${moved} and took 1st place from ${quoteToken(was)}.` : `${lead}, ${moved} and ${quoteToken(now)} rose to 1st.`;
+  }
+  const before = placeOf(c.p0, mover);
+  const after = placeOf(c.p1, mover);
+  const place = after === before ? (after === 1 ? ' and stayed 1st' : '') : ` and ${after < before ? 'moved up' : 'dropped'} to ${ordinal(after)}`;
+  return `${lead}, ${moved}${place}.`;
+}
 
 /** Tint steps for surprise: none below 2 bits, then one step every 4 bits, strongest from 14. */
 const surpriseLevel = (bits: number) => (bits < 2 ? 0 : bits < 6 ? 1 : bits < 10 ? 2 : bits < 14 ? 3 : 4);
 /** How unexpected token i was, given the tokens before it. */
 function surpriseLabel(i: number): string {
   const bits = trace.surprisal[i];
-  return Number.isNaN(bits) ? 'No context yet' : `${bits.toFixed(1)} bits of surprise, rank ${trace.ranks[i].toLocaleString()}`;
+  if (Number.isNaN(bits)) return 'No context yet';
+  const label = `${bits.toFixed(1)} bits of surprise, rank ${trace.ranks[i].toLocaleString()}`;
+  return baseline ? `${label}; ${baseline.surprisal[i].toFixed(1)} bits with every head on` : label;
 }
 
 /* ---------- Rendering ---------- */
@@ -266,7 +357,7 @@ function renderBlockStrip() {
       button.type = 'button';
       button.className = 'block-tile';
       button.setAttribute('role', 'tab');
-      button.innerHTML = `<canvas aria-hidden="true"></canvas><span>${l + 1}</span>`;
+      button.innerHTML = `<span class="tile-map"><canvas aria-hidden="true"></canvas></span><span>${l + 1}</span><span class="off-count readout" aria-hidden="true" hidden></span>`;
       button.setAttribute('aria-label', `Block ${l + 1}`);
       button.addEventListener('click', () => selectLayer(l));
       strip.append(button);
@@ -288,7 +379,7 @@ function renderHeadGrid() {
       button.className = 'head-tile';
       button.setAttribute('role', 'tab');
       button.setAttribute('aria-label', `Head ${h + 1}`);
-      button.innerHTML = `<canvas aria-hidden="true"></canvas><span>${h + 1}</span>`;
+      button.innerHTML = `<span class="tile-map"><canvas aria-hidden="true"></canvas></span><span>${h + 1}</span>`;
       button.addEventListener('click', () => selectHead(h));
       grid.append(button);
     }
@@ -302,8 +393,78 @@ function renderHeadGrid() {
   });
 }
 
+/**
+ * Marks the switched-off heads in the block overview and the head grid (a slash and a count, not only color),
+ * names the toggles for what they will do, and updates the page's line about them. Runs with every head detail.
+ */
+function renderHeadMarkers() {
+  Array.from($('block-strip').children).forEach((button: HTMLElement, l) => {
+    const count = countBits(mask[l]);
+    const which = count === N_HEAD ? 'every head' : headCount(count);
+    button.classList.toggle('has-off', count > 0);
+    button.classList.toggle('is-off', count === N_HEAD);
+    button.setAttribute('aria-label', count ? `Block ${l + 1}, ${which} switched off` : `Block ${l + 1}`);
+    button.title = count ? `${which[0].toUpperCase()}${which.slice(1)} switched off` : '';
+    const badge = button.querySelector<HTMLElement>('.off-count');
+    badge.textContent = String(count);
+    badge.hidden = !count;
+  });
+  Array.from($('head-grid').children).forEach((button: HTMLElement, h) => {
+    const off = isOff(mask, layer, h);
+    button.classList.toggle('is-off', off);
+    button.setAttribute('aria-label', off ? `Head ${h + 1}, switched off` : `Head ${h + 1}`);
+    button.title = off ? 'Switched off' : '';
+  });
+  const off = isOff(mask, layer, head);
+  $('head-toggle').textContent = off ? 'Switch it back on' : 'Switch off this head';
+  $('head-state').hidden = !off;
+  $('block-toggle').textContent = mask[layer] === WHOLE_BLOCK ? `Switch block ${layer + 1} back on` : `Switch off block ${layer + 1}`;
+  renderAblation();
+}
+
+/** The page's line: how many heads are off, where, and a way to turn them all back on. */
+function renderAblation() {
+  const off = countOff(mask);
+  $('ablation').hidden = off === 0;
+  if (!off) return;
+  $('ablation-count').textContent = off === N_LAYER * N_HEAD ? 'Every head switched off' : `${headCount(off)} switched off`;
+  const blocks = mask.flatMap((bits, l) => (bits ? [l + 1] : []));
+  const where = $('ablation-where');
+  where.textContent = blocks.length === N_LAYER ? 'in every block' : `in block${blocks.length === 1 ? '' : 's'} ${inWords(blocks)}`;
+  where.hidden = off === N_LAYER * N_HEAD;
+}
+
+/** Switches heads off or back on, then runs the tokens again. */
+function setMask(next: number[]) {
+  mask = next;
+  renderHeadMarkers();
+  renderImportance();
+  request(tokens);
+}
+
+$('head-toggle').addEventListener('click', () => {
+  const next = mask.slice();
+  next[layer] ^= 1 << head;
+  setMask(next);
+});
+$('block-toggle').addEventListener('click', () => {
+  const next = mask.slice();
+  next[layer] = next[layer] === WHOLE_BLOCK ? 0 : WHOLE_BLOCK;
+  setMask(next);
+});
+$('restore-heads').addEventListener('click', () => {
+  setMask(new Array(N_LAYER).fill(0));
+  // The button hides itself; keep focus on the control that switches a head off again.
+  $('head-toggle').focus({ preventScroll: true });
+});
+
 function renderHeadDetail() {
   $('head-title').textContent = `Block ${layer + 1}, head ${head + 1}`;
+  renderHeadMarkers();
+  // The pattern is still computed for a switched-off head; only its output is zero.
+  const shownOff = trace !== null && isOff(traceMask, layer, head);
+  $('head-output-figure').classList.toggle('is-off', shownOff);
+  $('head-output-note').textContent = shownOff ? 'switched off, all zeros' : 'attention · V';
   if (!trace) return;
   const { n } = trace;
   const slice = (array: Float32Array) => (r: number, c: number) => array[(layer * n + r) * EMBD + head * HEAD + c];
@@ -313,7 +474,9 @@ function renderHeadDetail() {
     const values = new Float32Array(n * HEAD);
     const read = slice(array);
     for (let r = 0; r < n; r++) for (let c = 0; c < HEAD; c++) values[r * HEAD + c] = read(r, c);
-    paint(canvas, n, HEAD, (r, c) => values[r * HEAD + c], 'diverging', robustScale(values));
+    // A switched-off head's output is all zeros: it stays unpainted, showing the empty hatching.
+    const blank = id === 'head-output' && shownOff;
+    paint(canvas, n, HEAD, (r, c) => (blank ? Number.NaN : values[r * HEAD + c]), 'diverging', robustScale(values));
     sizeRows(canvas, n);
     markFocus(canvas, n);
   }
@@ -357,9 +520,10 @@ function renderReadout(cell?: { row: number; col: number }) {
     for (let c = 1; c <= row; c++) if (trace.weights[base + c] > trace.weights[base + col]) col = c;
   }
   const quote = (i: number) => `“${displayToken(traceTokens[i]).trim() || '␣'}”`;
+  const off = isOff(traceMask, layer, head) ? ' The head is switched off, so none of it is passed on.' : '';
   readout.textContent = col > row
     ? `${quote(row)} can’t see ${quote(col)}: it comes later, so it’s masked.`
-    : `${quote(row)} gives ${(trace.weights[base + col] * 100).toFixed(1)}% of its attention to ${quote(col)}.`;
+    : `${quote(row)} gives ${(trace.weights[base + col] * 100).toFixed(1)}% of its attention to ${quote(col)}.${off}`;
 }
 
 function renderMlp() {
@@ -382,32 +546,65 @@ function renderMlp() {
   markFocus(canvas, n);
 }
 
+/**
+ * The ten likeliest next tokens. With heads off, each row compares the model's probability with every head on and
+ * now (before temperature and sampling): the shared part in ink, a gain in violet, a loss hatched in amber. Tokens
+ * that led with every head on stay listed after the ten, even when they fell further.
+ */
 function renderCandidates() {
   const list = $('candidate-list');
+  const summary = $('ablation-summary');
+  const sentence = trace && comparison ? describeChange(comparison, countOff(traceMask)) : '';
+  // Only a new sentence is announced; redraws for temperature or sampling keep it.
+  if (summary.textContent !== sentence) summary.textContent = sentence;
+  $('head-effect').textContent = sentence;
+  $('comparison-key').hidden = !sentence;
   if (!trace || !result) { list.innerHTML = ''; $('sampling-summary').textContent = ''; return; }
+  const c = comparison;
   const shown = Array.from(result.ranking.subarray(0, 10));
-  const max = result.scaled[shown[0]] || 1;
+  const dropped = c ? c.top0.slice(0, 5).filter(id => !shown.includes(id)) : [];
+  const rows = [...shown, ...dropped];
+  const max = c ? Math.max(...rows.map(id => Math.max(c.p0[id], c.p1[id]))) : result.scaled[shown[0]] || 1;
   const kept = new Set(result.kept);
+  const off = headCount(countOff(traceMask));
+  list.classList.toggle('is-compared', c !== null);
   const items = Array.from(list.children) as HTMLElement[];
-  shown.forEach((id, i) => {
+  rows.forEach((id, i) => {
     let item = items[i];
     if (!item) {
       item = document.createElement('li');
       item.className = 'candidate';
-      item.innerHTML = '<span class="candidate-text"></span><span class="candidate-bar"><i></i></span><span class="candidate-value readout"></span>';
+      item.innerHTML = '<span class="candidate-text"></span><span class="candidate-bar"><i></i><b aria-hidden="true"></b></span><span class="candidate-value readout"></span>';
       list.append(item);
     }
     const text = displayToken(id);
     item.querySelector('.candidate-text').textContent = text.replace(/\n/g, '↵').trim() || '␣';
-    item.querySelector<HTMLElement>('.candidate-bar i').style.width = `${(result.scaled[id] / max) * 100}%`;
-    item.querySelector('.candidate-value').textContent = kept.has(id) ? `${(result.probabilities[id] * 100).toFixed(1)}%` : '—';
+    const bar = item.querySelector<HTMLElement>('.candidate-bar i');
+    const change = item.querySelector<HTMLElement>('.candidate-bar b');
+    const value = item.querySelector('.candidate-value');
+    if (c) {
+      const [before, now] = [c.p0[id], c.p1[id]];
+      bar.style.width = `${(Math.min(before, now) / max) * 100}%`;
+      change.style.left = bar.style.width;
+      change.style.width = `${(Math.abs(now - before) / max) * 100}%`;
+      change.className = now > before ? 'is-gain' : 'is-loss';
+      value.textContent = `${percent(before)} → ${percent(now)}`;
+      const place = dropped.includes(id) ? `${ordinal(placeOf(c.p0, id))} with every head on, now ${ordinal(placeOf(c.p1, id))}. ` : '';
+      const chance = kept.has(id) ? `${(result.probabilities[id] * 100).toFixed(1)}% chance to be sampled` : 'Outside the sampling filter';
+      item.title = `${place}${percent(before)} with every head on, ${percent(now)} with ${off} off, before temperature and sampling. ${chance}.`;
+    } else {
+      bar.style.width = `${(result.scaled[id] / max) * 100}%`;
+      change.style.width = '0';
+      value.textContent = kept.has(id) ? `${(result.probabilities[id] * 100).toFixed(1)}%` : '—';
+      item.title = kept.has(id) ? `${(result.scaled[id] * 100).toFixed(2)}% before sampling filters` : 'Outside the sampling filter';
+    }
     item.classList.toggle('is-filtered', !kept.has(id));
     item.classList.toggle('is-sampled', id === sampled);
-    item.title = kept.has(id) ? `${(result.scaled[id] * 100).toFixed(2)}% before sampling filters` : 'Outside the sampling filter';
+    item.classList.toggle('is-dropped', dropped.includes(id));
     // The raw score, so tests can compare the GPU and CPU runs.
     item.dataset.logit = String(trace.logits[id]);
   });
-  items.slice(shown.length).forEach(item => item.remove());
+  items.slice(rows.length).forEach(item => item.remove());
   const share = result.kept.reduce((total, id) => total + result.scaled[id], 0);
   $('sampling-summary').textContent = settings.mode === 'top-k'
     ? `Sampling from the ${result.kept.length} most likely tokens, ${(share * 100).toFixed(0)}% of the probability.`
@@ -418,10 +615,10 @@ function renderCandidates() {
 
 /* ---------- How the guess forms ---------- */
 
-/** Whether a lens reads the current tokens at the focused position. */
-const lensIsCurrent = (candidate: { tokens: number[]; position: number; backend: Backend } | null) =>
+/** Whether a lens reads the current tokens, with the same heads off, at the focused position. */
+const lensIsCurrent = (candidate: { tokens: number[]; mask: number[]; position: number; backend: Backend } | null) =>
   candidate !== null && trace !== null && candidate.position === focusIndex() && candidate.tokens.join() === traceTokens.join()
-  && candidate.backend === traceBackend;
+  && candidate.backend === traceBackend && candidate.mask.join() === traceMask.join();
 
 /**
  * One row per stage: the embedding, then each block (a button that opens it).
@@ -450,7 +647,8 @@ function renderLens(reveal = false) {
   const { rows, tokens: read, position } = lens;
   const final = rows[N_LAYER].ids[0];
   const max = Math.max(...rows.map(row => row.probabilities[0]));
-  $('lens-context').textContent = `What could follow ${quoteToken(read[position])}, block by block, before temperature and sampling`;
+  const off = countOff(lens.mask);
+  $('lens-context').textContent = `What could follow ${quoteToken(read[position])}, block by block, before temperature and sampling${off ? `, with ${headCount(off)} off` : ''}`;
   const rowElements = Array.from(list.querySelectorAll<HTMLElement>('.lens-row'));
   rowElements.forEach((row, r) => {
     const { ids, probabilities } = rows[r];
@@ -489,6 +687,193 @@ function requestLens() {
   send({ type: 'lens', id: ++lensId, position: focusIndex() });
 }
 
+/* ---------- Which heads matter ---------- */
+
+type Importance = Extract<TransformerResponse, { type: 'importance' }>;
+/** The latest test of single heads, with earlier ones for the same tokens merged in (the CPU tests a block at a time). */
+let importance: Importance | null = null;
+let importanceId = 0;
+/** The test in progress: how many heads it has tested, of how many. */
+let testing: { done: number; total: number } | null = null;
+/** What the test in progress reads: the tokens through the focused one. */
+let testTokens: number[] = [];
+/** The cell under the pointer or focused (l * N_HEAD + h), or -1. */
+let importanceCell = -1;
+
+const importanceGrid = $('importance-grid');
+const importanceCells: HTMLButtonElement[] = [];
+
+/** Rows of blocks, columns of heads; each cell a button that opens its head. Arrow keys move between cells. */
+function buildImportanceGrid() {
+  const label = (text: string) => Object.assign(document.createElement('span'), { className: 'importance-label', textContent: text });
+  importanceGrid.append(label(''));
+  for (let h = 0; h < N_HEAD; h++) importanceGrid.append(label(String(h + 1)));
+  for (let l = 0; l < N_LAYER; l++) {
+    importanceGrid.append(label(String(l + 1)));
+    for (let h = 0; h < N_HEAD; h++) {
+      const cell = document.createElement('button');
+      cell.type = 'button';
+      cell.className = 'importance-cell';
+      cell.tabIndex = l === 0 && h === 0 ? 0 : -1;
+      const index = l * N_HEAD + h;
+      cell.addEventListener('click', () => {
+        selectLayer(l);
+        selectHead(h);
+        $('head-title').scrollIntoView({ block: 'nearest', behavior: reducedMotion.matches ? 'auto' : 'smooth' });
+      });
+      cell.addEventListener('pointerenter', () => showImportance(index));
+      cell.addEventListener('pointerleave', () => showImportance(-1));
+      cell.addEventListener('focus', () => showImportance(index));
+      cell.addEventListener('blur', () => showImportance(-1));
+      importanceCells.push(cell);
+      importanceGrid.append(cell);
+    }
+  }
+  importanceGrid.addEventListener('keydown', event => {
+    const at = importanceCells.indexOf(event.target as HTMLButtonElement);
+    const moves: Record<string, [number, number]> = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
+    if (at < 0 || !moves[event.key]) return;
+    event.preventDefault();
+    const [dl, dh] = moves[event.key];
+    const l = Math.max(0, Math.min(N_LAYER - 1, Math.floor(at / N_HEAD) + dl));
+    const h = Math.max(0, Math.min(N_HEAD - 1, at % N_HEAD + dh));
+    importanceCells.forEach(cell => { cell.tabIndex = -1; });
+    const next = importanceCells[l * N_HEAD + h];
+    next.tabIndex = 0;
+    next.focus();
+  });
+}
+buildImportanceGrid();
+
+/** What switching off one head alone did to the top guess. */
+function describeHead(index: number): string {
+  const { values, ranks, baseline, target } = importance;
+  const name = `Block ${Math.floor(index / N_HEAD) + 1}, head ${index % N_HEAD + 1}`;
+  const value = values[index];
+  if (Number.isNaN(value)) return `${name} hasn’t been tested.`;
+  const place = ranks[index] > 1 ? ` and it drops to ${ordinal(ranks[index])}` : '';
+  if (Math.abs(value - baseline) < .0005) return `${name} switched off alone: ${quoteToken(target)} stays at ${percent(baseline)}${place}.`;
+  return `${name} switched off alone: ${quoteToken(target)} ${value < baseline ? 'falls' : 'rises'} from ${percent(baseline)} to ${percent(value)}${place}.`;
+}
+
+/** The head that helps the top guess most, and the one that holds it back most. */
+function summarizeImportance(): string {
+  const { values, baseline, target } = importance;
+  let low = -1;
+  let high = -1;
+  values.forEach((value, i) => {
+    if (Number.isNaN(value)) return;
+    if (low < 0 || value < values[low]) low = i;
+    if (high < 0 || value > values[high]) high = i;
+  });
+  const tested = values.reduce((count, value) => count + (Number.isNaN(value) ? 0 : 1), 0);
+  // Until every head is tested, say which ones the claims cover.
+  const among = tested < values.length ? `Of the ${tested} heads tested, b` : 'B';
+  const name = (i: number) => `lock ${Math.floor(i / N_HEAD) + 1}, head ${i % N_HEAD + 1}`;
+  const parts: string[] = [];
+  if (low >= 0 && values[low] < baseline - .0005) {
+    parts.push(`${among}${name(low)} helps ${quoteToken(target)} most: switched off alone, it falls from ${percent(baseline)} to ${percent(values[low])}.`);
+  }
+  if (high >= 0 && values[high] > baseline + .0005) {
+    parts.push(`${parts.length ? 'B' : among}${name(high)} holds it back most: without it, ${quoteToken(target)} rises to ${percent(values[high])}.`);
+  }
+  return parts.join(' ') || (tested ? `No head tested moves ${quoteToken(target)} by even 0.1 percentage points.` : '');
+}
+
+function showImportance(index: number) {
+  importanceCell = index;
+  const readout = $('importance-readout');
+  readout.textContent = !importance ? '' : index >= 0 ? describeHead(index) : summarizeImportance();
+}
+
+/** The test's button and progress, then the map: each cell colored by how far its head moves the top guess. */
+function renderImportance() {
+  const onGpu = engine?.backend === 'gpu';
+  const map = importance && importance.target >= 0 ? importance : null;
+  const start = $<HTMLButtonElement>('importance-start');
+  start.hidden = testing !== null;
+  start.textContent = onGpu ? 'Test every head' : `Test the heads of block ${layer + 1}`;
+  // Nothing new to test: the map already reads the focused token, with these heads tested.
+  const current = map !== null && trace !== null && map.tokens.join() === traceTokens.slice(0, focusIndex() + 1).join();
+  const covered = (values: Float32Array) => values.every(value => !Number.isNaN(value));
+  start.disabled = !trace || current && covered(onGpu ? map.values : map.values.subarray(layer * N_HEAD, (layer + 1) * N_HEAD));
+  $('importance-stop').hidden = !testing;
+  // Screen readers hear the progress once the test settles, not after every head.
+  $('importance-progress').setAttribute('aria-busy', String(testing !== null));
+  const tested = map ? map.values.reduce((count, value) => count + (Number.isNaN(value) ? 0 : 1), 0) : 0;
+  $('importance-progress').textContent = testing
+    ? `Testing ${testing.done} of ${testing.total} heads`
+    : tested ? `${tested === N_LAYER * N_HEAD ? 'Every head' : `${tested} heads`} tested${map.done === tested ? ` in ${duration(map.ms)}` : ''}` : '';
+  $('importance-context').textContent = map
+    ? `Each cell switches off one head alone: how far ${quoteToken(map.target)} after ${quoteToken(map.tokens.at(-1))} moves from ${percent(map.baseline)}. Blocks run down, heads across${onGpu ? '' : '; on the CPU, test a block at a time'}.`
+    : `Switch off each head on its own and see how the top guess changes.${onGpu ? '' : ' Testing all 144 needs the GPU; on the CPU, test one block’s 12 heads at a time.'}`;
+  $('importance-map').hidden = !map;
+  if (!map) return;
+  $('importance-lower').textContent = `Lowers ${quoteToken(map.target)}`;
+  let scale = .001;
+  map.values.forEach(value => { if (!Number.isNaN(value)) scale = Math.max(scale, Math.abs(value - map.baseline)); });
+  importanceCells.forEach((cell, i) => {
+    const value = map.values[i];
+    const known = !Number.isNaN(value);
+    const at = Math.round(Math.max(0, Math.min(1, ((value - map.baseline) / scale + 1) / 2)) * 255) * 3;
+    cell.style.backgroundColor = known ? `rgb(${diverging[at]} ${diverging[at + 1]} ${diverging[at + 2]})` : '';
+    cell.classList.toggle('is-known', known);
+    // The probability itself, so tests can compare processors.
+    if (known) cell.dataset.value = String(value);
+    else delete cell.dataset.value;
+    cell.classList.toggle('is-off', isOff(mask, Math.floor(i / N_HEAD), i % N_HEAD));
+    cell.classList.toggle('is-open', Math.floor(i / N_HEAD) === layer && i % N_HEAD === head);
+    cell.setAttribute('aria-label', `${describeHead(i)}${isOff(mask, Math.floor(i / N_HEAD), i % N_HEAD) ? ' Switched off now.' : ''}`);
+  });
+  showImportance(importanceCell);
+}
+
+function startImportance() {
+  if (!ready || !trace || testing) return;
+  testTokens = traceTokens.slice(0, focusIndex() + 1);
+  // Results for other tokens no longer apply; on the CPU, earlier blocks for the same tokens are kept.
+  if (importance && importance.tokens.join() !== testTokens.join()) importance = null;
+  const blocks = engine?.backend === 'gpu' ? Array.from({ length: N_LAYER }, (_, l) => l) : [layer];
+  testing = { done: 0, total: blocks.length * N_HEAD };
+  send({ type: 'importance', id: ++importanceId, tokens: testTokens, blocks });
+  renderImportance();
+}
+
+function stopImportance() {
+  if (!testing) return;
+  testing = null;
+  // Replies already on their way are ignored.
+  importanceId++;
+  send({ type: 'stop-importance' });
+  renderImportance();
+}
+
+// The two buttons swap places, so focus follows.
+$('importance-start').addEventListener('click', () => {
+  startImportance();
+  if (testing) $('importance-stop').focus();
+});
+$('importance-stop').addEventListener('click', () => {
+  stopImportance();
+  $('importance-start').focus();
+});
+
+function receiveImportance(data: Importance) {
+  if (data.id !== importanceId) return;
+  if (importance && importance.tokens.join() === data.tokens.join() && importance.target === data.target) {
+    data.values.forEach((value, i) => {
+      if (!Number.isNaN(value) || Number.isNaN(importance.values[i])) return;
+      data.values[i] = importance.values[i];
+      data.ranks[i] = importance.ranks[i];
+    });
+  }
+  importance = data;
+  const stopFocused = document.activeElement === $('importance-stop');
+  testing = data.stopped || data.done === data.total ? null : { done: data.done, total: data.total };
+  renderImportance();
+  if (!testing && stopFocused) $('importance-start').focus();
+}
+
 function renderAll() {
   flow.classList.toggle('is-empty', !trace);
   renderTokenList();
@@ -500,6 +885,7 @@ function renderAll() {
   renderMlp();
   renderCandidates();
   renderLens();
+  renderImportance();
 }
 
 /* ---------- Interaction ---------- */
@@ -508,6 +894,7 @@ function setFocus(index: number) {
   if (!trace || index === focusIndex() && focus >= 0) return;
   focus = index;
   renderAttentionBars();
+  renderImportance();
   document.querySelectorAll<HTMLCanvasElement>('canvas.matrix').forEach(canvas => {
     if (canvas.parentElement.querySelector(`.focus-row[data-for="${canvas.id}"]`)) markFocus(canvas, trace.n, canvas.classList.contains('square'));
   });
@@ -523,6 +910,7 @@ function selectLayer(l: number) {
   renderMlp();
   renderAttentionBars();
   renderLens();
+  renderImportance();
 }
 
 function selectHead(h: number) {
@@ -530,6 +918,7 @@ function selectHead(h: number) {
   renderHeadGrid();
   renderHeadDetail();
   renderAttentionBars();
+  renderImportance();
 }
 
 // Hovering a row of any matrix focuses that token; attention cells name both tokens.
@@ -548,11 +937,14 @@ document.querySelectorAll<HTMLCanvasElement>('canvas.matrix').forEach(canvas => 
 
 function request(next: number[]) {
   if (!ready || !next.length) return;
-  if (pending) { queued = { tokens: next, backend }; return; }
+  // A test of single heads reads the tokens through one position; new ones there end it.
+  if (testing && next.slice(0, testTokens.length).join() !== testTokens.join()) stopImportance();
+  const run: Run = { tokens: next, backend, mask: mask.slice() };
+  if (pending) { queued = run; return; }
   pending = true;
-  inFlight = { tokens: next, backend };
+  inFlight = run;
   flow.setAttribute('aria-busy', 'true');
-  send({ type: 'run', id: ++requestId, tokens: next, backend });
+  send({ type: 'run', id: ++requestId, ...run });
 }
 
 function updateTokens() {
@@ -697,6 +1089,7 @@ document.querySelectorAll<HTMLButtonElement>('#engine-choice [data-backend]').fo
     if (next === backend) return;
     backend = next;
     renderEngine();
+    stopImportance();
     // Rerun the current tokens from scratch on the chosen processor, so the times compare.
     request(trace ? traceTokens : tokens);
   });
@@ -726,11 +1119,13 @@ worker.onmessage = ({ data }: MessageEvent<TransformerResponse>) => {
   } else if (data.type === 'engine') {
     engine = data.engine;
     renderEngine();
+    stopImportance();
+    renderImportance();
   } else if (data.type === 'result') {
     // The worker can also send a result unasked, after recomputing on the CPU when the GPU stops working.
     if (data.id === requestId) {
       pending = false;
-      if (queued && (queued.tokens.join() !== data.tokens.join() || queued.backend !== inFlight?.backend)) {
+      if (queued && !sameRun(queued, inFlight)) {
         const next = queued.tokens;
         queued = null;
         request(next);
@@ -742,6 +1137,11 @@ worker.onmessage = ({ data }: MessageEvent<TransformerResponse>) => {
     trace = data.trace;
     traceTokens = data.tokens;
     traceBackend = data.backend;
+    traceMask = data.mask;
+    baseline = data.baseline;
+    comparison = baseline ? compare(baseline.logits, trace.logits) : null;
+    // A map of single heads stays while its tokens lead the prompt.
+    if (importance && traceTokens.slice(0, importance.tokens.length).join() !== importance.tokens.join()) importance = null;
     if (focus >= trace.n) focus = -1;
     result = applySampling(trace.logits, settings);
     generateButton.disabled = traceTokens.length >= MAX_TOKENS;
@@ -760,6 +1160,8 @@ worker.onmessage = ({ data }: MessageEvent<TransformerResponse>) => {
   } else if (data.type === 'weights') {
     headWeights = data;
     renderWeights();
+  } else if (data.type === 'importance') {
+    receiveImportance(data);
   } else {
     pending = false;
     lensInFlight = false;

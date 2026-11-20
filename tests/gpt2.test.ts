@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { Gpt2Session, topTokens, weightsFromBuffer, type Gpt2Manifest } from '../src/transformer/gpt2';
+import { checkHeadMask, Gpt2Session, headsOff, surpriseOf, topTokens, weightsFromBuffer, type Gpt2Manifest } from '../src/transformer/gpt2';
 import { Gpt2Tokenizer } from '../src/transformer/tokenizer';
 import { applySampling, softmax } from '../src/transformer/sampling';
 
@@ -159,6 +159,132 @@ describe('reading the prediction as it forms', () => {
     const fresh = new Gpt2Session(weights);
     fresh.setTokens(edited);
     expect(after).toEqual(fresh.surprisal());
+  });
+});
+
+describe('switching heads off', () => {
+  /** Equal to the bit, unlike toEqual, which treats 0 and −0 alike. */
+  const sameBits = (a: Float32Array, b: Float32Array) => Buffer.from(a.buffer, a.byteOffset, a.byteLength).equals(Buffer.from(b.buffer, b.byteOffset, b.byteLength));
+  /** A head mask with the listed [block, head] pairs off, both counted from 0. */
+  const off = (...heads: [number, number][]) => {
+    const mask = new Array<number>(weights.config.nLayer).fill(0);
+    for (const [l, h] of heads) mask[l] |= 1 << h;
+    return mask;
+  };
+  const fresh = (ids: number[], mask: number[] | null) => {
+    const session = new Gpt2Session(weights);
+    session.setTokens(ids, mask);
+    return session;
+  };
+  const mary = 'When Mary and John went to the store, John gave a drink to';
+
+  it('changes nothing, to the bit, while every head is on', { timeout: 60_000 }, () => {
+    const ids = tokenizer.encode('The capital of France is');
+    const plain = fresh(ids, null);
+    const masked = fresh(ids, off());
+    expect(masked.headMask).toEqual(off());
+    expect(sameBits(masked.logits(), plain.logits())).toBe(true);
+    masked.positions.forEach((position, t) => position.layers.forEach((step, l) => {
+      expect(sameBits(step.attended, plain.positions[t].layers[l].attended)).toBe(true);
+      expect(sameBits(step.output, plain.positions[t].layers[l].output)).toBe(true);
+    }));
+    expect(masked.surprisal()).toEqual(plain.surprisal());
+  });
+
+  it('zeroes a head’s output but keeps its pattern, and switching it back on restores every logit', { timeout: 60_000 }, () => {
+    const ids = tokenizer.encode(mary);
+    const session = fresh(ids, null);
+    const before = session.logits();
+    const pattern = session.positions.map(position => position.layers[11].weights[10]);
+    const earlier = session.positions[5].layers[10];
+    // Block 12, head 11 attends to “Mary” and pushes against it: without it, “Mary” is far likelier.
+    session.setHeadMask(off([11, 10]));
+    const after = session.logits();
+    const name = tokenizer.encode(' Mary')[0];
+    expect(softmax(before)[name]).toBeCloseTo(.453, 2);
+    expect(softmax(after)[name]).toBeCloseTo(.733, 2);
+    session.positions.forEach((position, t) => {
+      expect(position.layers[11].attended.subarray(640, 704).every(value => value === 0)).toBe(true);
+      expect(position.layers[11].attended.subarray(576, 640).some(value => value !== 0)).toBe(true);
+      expect(sameBits(position.layers[11].weights[10], pattern[t])).toBe(true);
+    });
+    // Blocks before the switched-off head were kept, not recomputed.
+    expect(session.positions[5].layers[10]).toBe(earlier);
+    session.setHeadMask(null);
+    expect(sameBits(session.logits(), before)).toBe(true);
+  });
+
+  it('reuses what it can as heads and tokens change, and matches a fresh session', { timeout: 120_000 }, () => {
+    const ids = tokenizer.encode('The capital of France is Paris, and the capital of Spain is');
+    const session = new Gpt2Session(weights);
+    expect(session.setTokens(ids.slice(0, 6))).toBe(0);
+    // A new mask recomputes every kept position (none reused whole); the same mask keeps them all.
+    expect(session.setTokens(ids.slice(0, 6), off([7, 3]))).toBe(0);
+    expect(session.setTokens(ids.slice(0, 9))).toBe(6);
+    expect(session.headMask).toEqual(off([7, 3]));
+    const below = session.positions[4].layers[1];
+    session.setTokens(ids.slice(0, 9), off([7, 3], [2, 5]));
+    expect(session.positions[4].layers[1]).toBe(below);
+    expect(session.positions[4].layers[2]).not.toBe(below);
+    // Switch one head back on and type more, in one step.
+    expect(session.setTokens(ids, off([2, 5]))).toBe(0);
+    const reference = fresh(ids, off([2, 5]));
+    expect(sameBits(session.logits(), reference.logits())).toBe(true);
+    expect(session.surprisal()).toEqual(reference.surprisal());
+    for (const t of [0, 5, ids.length - 1]) {
+      const rows = session.lens(t);
+      reference.lens(t).forEach((row, r) => expect(sameBits(rows[r], row)).toBe(true));
+    }
+    session.setTokens(ids, null);
+    expect(sameBits(session.logits(), fresh(ids, null).logits())).toBe(true);
+
+    // A fork shares what it can and leaves the original alone.
+    const original = fresh(ids.slice(0, 5), null);
+    const kept = original.logits();
+    const copy = original.fork();
+    copy.setHeadMask(off([5, 1]));
+    expect(sameBits(original.logits(), kept)).toBe(true);
+    expect(original.headMask).toEqual(off());
+    expect(copy.positions[2].layers[4]).toBe(original.positions[2].layers[4]);
+    expect(copy.positions[2].layers[5]).not.toBe(original.positions[2].layers[5]);
+    expect(sameBits(copy.logits(), fresh(ids.slice(0, 5), off([5, 1])).logits())).toBe(true);
+  });
+
+  it('with every head off, the last prediction can’t depend on the tokens before it', { timeout: 60_000 }, () => {
+    const every = new Array<number>(weights.config.nLayer).fill(2 ** weights.config.nHead - 1);
+    expect(headsOff(every)).toBe(144);
+    const ids = tokenizer.encode('The capital of France is');
+    const other = [...tokenizer.encode('A dog ran fast').slice(0, ids.length - 1), ids.at(-1)];
+    expect(other).toHaveLength(ids.length);
+    expect(other.slice(0, -1)).not.toEqual(ids.slice(0, -1));
+    // Nothing moves between positions, so only the last token and its position remain.
+    expect(sameBits(fresh(ids, every).logits(), fresh(other, every).logits())).toBe(true);
+    expect(sameBits(fresh(ids, null).logits(), fresh(other, null).logits())).toBe(false);
+  });
+
+  it('reads the lens and the surprise from the run with heads off', { timeout: 60_000 }, () => {
+    const ids = tokenizer.encode(mary);
+    const last = ids.length - 1;
+    const on = fresh(ids, null);
+    const ablated = on.fork();
+    ablated.setHeadMask(off([5, 1]));
+    const lensOn = on.lens(last);
+    const lensOff = ablated.lens(last);
+    // The embedding and blocks 1 to 5 come before the switched-off head in block 6; every later stage differs.
+    lensOff.forEach((row, r) => expect(sameBits(row, lensOn[r])).toBe(r <= 5));
+    expect(sameBits(lensOff[12], ablated.logits())).toBe(true);
+    // Each token's surprise comes from the prediction before it, with the head off.
+    const bits = ablated.surprisal();
+    expect(bits[0]).toBeNull();
+    for (let t = 1; t <= last; t++) expect(bits[t]).toEqual(surpriseOf(ablated.lens(t - 1)[12], ids[t]));
+    expect(bits.slice(1)).not.toEqual(on.surprisal().slice(1));
+  });
+
+  it('rejects masks that don’t fit the model', () => {
+    expect(checkHeadMask(null, weights.config)).toEqual(off());
+    expect(() => checkHeadMask([1, 2], weights.config)).toThrow(/one bitmask per block/);
+    expect(() => checkHeadMask([...off().slice(1), 4096], weights.config)).toThrow(/bitmask of 12 heads/);
+    expect(() => new Gpt2Session(weights).setTokens([464], [0.5, ...off().slice(1)])).toThrow(/bitmask/);
   });
 });
 

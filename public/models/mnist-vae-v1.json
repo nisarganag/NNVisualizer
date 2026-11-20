@@ -1,0 +1,749 @@
+{
+  "format": "mnist-vae-v1",
+  "imageSize": 28,
+  "latentSize": 2,
+  "hiddenSizes": [
+    256,
+    128
+  ],
+  "activation": "relu",
+  "parameters": 469268,
+  "tensors": [
+    {
+      "name": "encoder.hidden1.weights",
+      "shape": [
+        784,
+        256
+      ],
+      "offset": 0
+    },
+    {
+      "name": "encoder.hidden1.biases",
+      "shape": [
+        256
+      ],
+      "offset": 200704
+    },
+    {
+      "name": "encoder.hidden2.weights",
+      "shape": [
+        256,
+        128
+      ],
+      "offset": 200960
+    },
+    {
+      "name": "encoder.hidden2.biases",
+      "shape": [
+        128
+      ],
+      "offset": 233728
+    },
+    {
+      "name": "encoder.mean.weights",
+      "shape": [
+        128,
+        2
+      ],
+      "offset": 233856
+    },
+    {
+      "name": "encoder.mean.biases",
+      "shape": [
+        2
+      ],
+      "offset": 234112
+    },
+    {
+      "name": "encoder.logVariance.weights",
+      "shape": [
+        128,
+        2
+      ],
+      "offset": 234114
+    },
+    {
+      "name": "encoder.logVariance.biases",
+      "shape": [
+        2
+      ],
+      "offset": 234370
+    },
+    {
+      "name": "decoder.hidden1.weights",
+      "shape": [
+        2,
+        128
+      ],
+      "offset": 234372
+    },
+    {
+      "name": "decoder.hidden1.biases",
+      "shape": [
+        128
+      ],
+      "offset": 234628
+    },
+    {
+      "name": "decoder.hidden2.weights",
+      "shape": [
+        128,
+        256
+      ],
+      "offset": 234756
+    },
+    {
+      "name": "decoder.hidden2.biases",
+      "shape": [
+        256
+      ],
+      "offset": 267524
+    },
+    {
+      "name": "decoder.output.weights",
+      "shape": [
+        256,
+        784
+      ],
+      "offset": 267780
+    },
+    {
+      "name": "decoder.output.biases",
+      "shape": [
+        784
+      ],
+      "offset": 468484
+    }
+  ],
+  "view": {
+    "min": -4,
+    "max": 4
+  },
+  "classCenters": [
+    [
+      0.7169,
+      1.0671
+    ],
+    [
+      -1.7481,
+      -0.1047
+    ],
+    [
+      1.3839,
+      0.1089
+    ],
+    [
+      0.2139,
+      0.3072
+    ],
+    [
+      -0.1541,
+      -0.7984
+    ],
+    [
+      -0.4091,
+      0.7338
+    ],
+    [
+      1.13,
+      -0.4883
+    ],
+    [
+      -0.0764,
+      -1.7076
+    ],
+    [
+      -0.405,
+      0.0304
+    ],
+    [
+      0.1023,
+      -1.1709
+    ]
+  ],
+  "codes": {
+    "file": "mnist-vae-codes-v1.bin",
+    "count": 5000,
+    "layout": "5000 pairs of little-endian float32 (the mean code μ₁, μ₂), then 5000 uint8 labels",
+    "testIndices": "every second MNIST test digit: 0, 2, 4, …"
+  },
+  "examples": {
+    "file": "mnist-vae-examples-v1.bin",
+    "count": 100,
+    "layout": "100 unmodified 28×28 uint8 MNIST test digits (CC BY-SA 3.0), 10 random ones per class",
+    "labels": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      6,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      9,
+      9,
+      9,
+      9,
+      9,
+      9,
+      9,
+      9,
+      9,
+      9
+    ],
+    "testIndices": [
+      424,
+      2656,
+      4432,
+      5430,
+      7072,
+      7330,
+      7838,
+      8798,
+      9704,
+      9930,
+      416,
+      984,
+      1368,
+      1868,
+      4014,
+      4074,
+      5490,
+      6202,
+      6618,
+      8244,
+      444,
+      738,
+      1538,
+      2726,
+      4442,
+      5272,
+      5772,
+      6754,
+      7986,
+      8746,
+      310,
+      2952,
+      3094,
+      5764,
+      5892,
+      8570,
+      9182,
+      9192,
+      9558,
+      9670,
+      740,
+      776,
+      2498,
+      2882,
+      3792,
+      4332,
+      5888,
+      5946,
+      8582,
+      8790,
+      778,
+      1032,
+      1866,
+      3022,
+      3468,
+      4118,
+      6706,
+      7842,
+      8444,
+      8964,
+      138,
+      2920,
+      4952,
+      5768,
+      5844,
+      6020,
+      6354,
+      7188,
+      7758,
+      9138,
+      2480,
+      3720,
+      4966,
+      5866,
+      7296,
+      7744,
+      8512,
+      8620,
+      8956,
+      9196,
+      4792,
+      6404,
+      6410,
+      6654,
+      7200,
+      7244,
+      8522,
+      9078,
+      9150,
+      9564,
+      1894,
+      4592,
+      4840,
+      5026,
+      5580,
+      5730,
+      6112,
+      6422,
+      7462,
+      9054
+    ]
+  },
+  "scores": {
+    "testImages": 10000,
+    "note": "Nats per test image, from model.ts reading the exported file. The ELBO decodes one random sample of each code (fixed noise); the page decodes the mean code.",
+    "elbo": -138.67,
+    "reconstruction": 131.59,
+    "kl": 7.086,
+    "reconstructionAtMean": 130.65,
+    "meanImageReconstruction": 205.8,
+    "knn": {
+      "k": 5,
+      "testAgainstTrain": 0.8159,
+      "testAgainstTrainPerClass": [
+        0.965,
+        0.975,
+        0.908,
+        0.783,
+        0.669,
+        0.666,
+        0.926,
+        0.831,
+        0.745,
+        0.654
+      ],
+      "leaveOneOutOnMap": 0.8098
+    },
+    "readByDigitsNetwork": {
+      "note": "Share of test digits whose reconstruction (decoded from the mean code) the Digits page's CNN reads as the true digit.",
+      "overall": 0.8208,
+      "perClass": [
+        0.971,
+        0.979,
+        0.91,
+        0.818,
+        0.465,
+        0.649,
+        0.93,
+        0.822,
+        0.767,
+        0.853
+      ],
+      "classCenters": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  "training": {
+    "data": "MNIST training set, 60,000 digits, grey levels scaled to 0..1, no augmentation",
+    "likelihood": "Bernoulli: binary cross-entropy of the grey levels against the decoded probabilities",
+    "prior": "standard normal, with the full KL term from the first step (no warm-up)",
+    "epochs": 60,
+    "klWarmupEpochs": 0,
+    "batch": 128,
+    "optimizer": "Adam (β₁ 0.9, β₂ 0.999), learning rate warming up over 200 steps to 0.001, cosine decay to 0.00001",
+    "initialization": "He-normal before ReLUs, √(1 / fan-in) for the code and output layers, output biases at the logit of the mean training image",
+    "seed": 20261120,
+    "workers": 4,
+    "seconds": 999,
+    "node": "v26.13.1",
+    "history": [
+      {
+        "epoch": 1,
+        "elbo": -164.57,
+        "reconstructionAtMean": 158.47
+      },
+      {
+        "epoch": 2,
+        "elbo": -157.61,
+        "reconstructionAtMean": 150.9
+      },
+      {
+        "epoch": 3,
+        "elbo": -153.25,
+        "reconstructionAtMean": 146.39
+      },
+      {
+        "epoch": 4,
+        "elbo": -150.96,
+        "reconstructionAtMean": 143.78
+      },
+      {
+        "epoch": 5,
+        "elbo": -149.15,
+        "reconstructionAtMean": 142.02
+      },
+      {
+        "epoch": 6,
+        "elbo": -148.05,
+        "reconstructionAtMean": 140.69
+      },
+      {
+        "epoch": 7,
+        "elbo": -146.76,
+        "reconstructionAtMean": 139.38
+      },
+      {
+        "epoch": 8,
+        "elbo": -145.94,
+        "reconstructionAtMean": 138.5
+      },
+      {
+        "epoch": 9,
+        "elbo": -145.55,
+        "reconstructionAtMean": 138.06
+      },
+      {
+        "epoch": 10,
+        "elbo": -145.24,
+        "reconstructionAtMean": 137.8
+      },
+      {
+        "epoch": 11,
+        "elbo": -144.01,
+        "reconstructionAtMean": 136.45
+      },
+      {
+        "epoch": 12,
+        "elbo": -143.84,
+        "reconstructionAtMean": 136.27
+      },
+      {
+        "epoch": 13,
+        "elbo": -143.73,
+        "reconstructionAtMean": 136.16
+      },
+      {
+        "epoch": 14,
+        "elbo": -143.08,
+        "reconstructionAtMean": 135.45
+      },
+      {
+        "epoch": 15,
+        "elbo": -143.04,
+        "reconstructionAtMean": 135.42
+      },
+      {
+        "epoch": 16,
+        "elbo": -142.16,
+        "reconstructionAtMean": 134.48
+      },
+      {
+        "epoch": 17,
+        "elbo": -141.91,
+        "reconstructionAtMean": 134.21
+      },
+      {
+        "epoch": 18,
+        "elbo": -141.84,
+        "reconstructionAtMean": 134.15
+      },
+      {
+        "epoch": 19,
+        "elbo": -141.52,
+        "reconstructionAtMean": 133.82
+      },
+      {
+        "epoch": 20,
+        "elbo": -141.76,
+        "reconstructionAtMean": 134
+      },
+      {
+        "epoch": 21,
+        "elbo": -141.07,
+        "reconstructionAtMean": 133.29
+      },
+      {
+        "epoch": 22,
+        "elbo": -140.9,
+        "reconstructionAtMean": 133.14
+      },
+      {
+        "epoch": 23,
+        "elbo": -140.96,
+        "reconstructionAtMean": 133.2
+      },
+      {
+        "epoch": 24,
+        "elbo": -140.7,
+        "reconstructionAtMean": 132.93
+      },
+      {
+        "epoch": 25,
+        "elbo": -140.42,
+        "reconstructionAtMean": 132.62
+      },
+      {
+        "epoch": 26,
+        "elbo": -140.21,
+        "reconstructionAtMean": 132.42
+      },
+      {
+        "epoch": 27,
+        "elbo": -140.23,
+        "reconstructionAtMean": 132.38
+      },
+      {
+        "epoch": 28,
+        "elbo": -140,
+        "reconstructionAtMean": 132.16
+      },
+      {
+        "epoch": 29,
+        "elbo": -139.84,
+        "reconstructionAtMean": 132.04
+      },
+      {
+        "epoch": 30,
+        "elbo": -139.89,
+        "reconstructionAtMean": 132.01
+      },
+      {
+        "epoch": 31,
+        "elbo": -139.56,
+        "reconstructionAtMean": 131.69
+      },
+      {
+        "epoch": 32,
+        "elbo": -139.55,
+        "reconstructionAtMean": 131.75
+      },
+      {
+        "epoch": 33,
+        "elbo": -139.45,
+        "reconstructionAtMean": 131.54
+      },
+      {
+        "epoch": 34,
+        "elbo": -139.42,
+        "reconstructionAtMean": 131.53
+      },
+      {
+        "epoch": 35,
+        "elbo": -139.42,
+        "reconstructionAtMean": 131.49
+      },
+      {
+        "epoch": 36,
+        "elbo": -139.35,
+        "reconstructionAtMean": 131.46
+      },
+      {
+        "epoch": 37,
+        "elbo": -139.26,
+        "reconstructionAtMean": 131.34
+      },
+      {
+        "epoch": 38,
+        "elbo": -139.1,
+        "reconstructionAtMean": 131.18
+      },
+      {
+        "epoch": 39,
+        "elbo": -139.12,
+        "reconstructionAtMean": 131.18
+      },
+      {
+        "epoch": 40,
+        "elbo": -139.02,
+        "reconstructionAtMean": 131.07
+      },
+      {
+        "epoch": 41,
+        "elbo": -139.1,
+        "reconstructionAtMean": 131.13
+      },
+      {
+        "epoch": 42,
+        "elbo": -138.99,
+        "reconstructionAtMean": 131.04
+      },
+      {
+        "epoch": 43,
+        "elbo": -139.02,
+        "reconstructionAtMean": 131.03
+      },
+      {
+        "epoch": 44,
+        "elbo": -138.95,
+        "reconstructionAtMean": 130.95
+      },
+      {
+        "epoch": 45,
+        "elbo": -138.94,
+        "reconstructionAtMean": 130.97
+      },
+      {
+        "epoch": 46,
+        "elbo": -138.82,
+        "reconstructionAtMean": 130.84
+      },
+      {
+        "epoch": 47,
+        "elbo": -138.75,
+        "reconstructionAtMean": 130.78
+      },
+      {
+        "epoch": 48,
+        "elbo": -138.65,
+        "reconstructionAtMean": 130.66
+      },
+      {
+        "epoch": 49,
+        "elbo": -138.76,
+        "reconstructionAtMean": 130.75
+      },
+      {
+        "epoch": 50,
+        "elbo": -138.69,
+        "reconstructionAtMean": 130.69
+      },
+      {
+        "epoch": 51,
+        "elbo": -138.79,
+        "reconstructionAtMean": 130.78
+      },
+      {
+        "epoch": 52,
+        "elbo": -138.68,
+        "reconstructionAtMean": 130.66
+      },
+      {
+        "epoch": 53,
+        "elbo": -138.66,
+        "reconstructionAtMean": 130.65
+      },
+      {
+        "epoch": 54,
+        "elbo": -138.67,
+        "reconstructionAtMean": 130.65
+      },
+      {
+        "epoch": 55,
+        "elbo": -138.67,
+        "reconstructionAtMean": 130.65
+      },
+      {
+        "epoch": 56,
+        "elbo": -138.66,
+        "reconstructionAtMean": 130.65
+      },
+      {
+        "epoch": 57,
+        "elbo": -138.66,
+        "reconstructionAtMean": 130.65
+      },
+      {
+        "epoch": 58,
+        "elbo": -138.66,
+        "reconstructionAtMean": 130.64
+      },
+      {
+        "epoch": 59,
+        "elbo": -138.68,
+        "reconstructionAtMean": 130.65
+      },
+      {
+        "epoch": 60,
+        "elbo": -138.67,
+        "reconstructionAtMean": 130.65
+      }
+    ]
+  }
+}

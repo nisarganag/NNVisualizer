@@ -1,0 +1,624 @@
+{
+  "format": "char-rnn-v1",
+  "vocabulary": "\n !\"'(),-.:;?ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+  "inputSize": 65,
+  "hiddenSize": 512,
+  "parameters": 329281,
+  "tensors": [
+    {
+      "name": "inputWeights",
+      "shape": [
+        65,
+        512
+      ],
+      "offset": 0
+    },
+    {
+      "name": "recurrentWeights",
+      "shape": [
+        512,
+        512
+      ],
+      "offset": 33280
+    },
+    {
+      "name": "bias",
+      "shape": [
+        512
+      ],
+      "offset": 295424
+    },
+    {
+      "name": "outputWeights",
+      "shape": [
+        65,
+        512
+      ],
+      "offset": 295936
+    },
+    {
+      "name": "outputBias",
+      "shape": [
+        65
+      ],
+      "offset": 329216
+    }
+  ],
+  "corpus": [
+    {
+      "title": "Alice’s Adventures in Wonderland",
+      "author": "Lewis Carroll",
+      "gutenbergId": 11
+    },
+    {
+      "title": "Through the Looking-Glass, and What Alice Found There",
+      "author": "Lewis Carroll",
+      "gutenbergId": 12
+    },
+    {
+      "title": "The Wonderful Wizard of Oz",
+      "author": "L. Frank Baum",
+      "gutenbergId": 55
+    },
+    {
+      "title": "The Marvelous Land of Oz",
+      "author": "L. Frank Baum",
+      "gutenbergId": 54
+    },
+    {
+      "title": "Peter Pan",
+      "author": "J. M. Barrie",
+      "gutenbergId": 16
+    },
+    {
+      "title": "Anne of Green Gables",
+      "author": "L. M. Montgomery",
+      "gutenbergId": 45
+    },
+    {
+      "title": "The Secret Garden",
+      "author": "Frances Hodgson Burnett",
+      "gutenbergId": 113
+    },
+    {
+      "title": "A Little Princess",
+      "author": "Frances Hodgson Burnett",
+      "gutenbergId": 146
+    },
+    {
+      "title": "Treasure Island",
+      "author": "Robert Louis Stevenson",
+      "gutenbergId": 120
+    },
+    {
+      "title": "The Jungle Book",
+      "author": "Rudyard Kipling",
+      "gutenbergId": 236
+    },
+    {
+      "title": "Just So Stories",
+      "author": "Rudyard Kipling",
+      "gutenbergId": 2781
+    },
+    {
+      "title": "Black Beauty",
+      "author": "Anna Sewell",
+      "gutenbergId": 271
+    },
+    {
+      "title": "The Wind in the Willows",
+      "author": "Kenneth Grahame",
+      "gutenbergId": 289
+    },
+    {
+      "title": "The Adventures of Pinocchio",
+      "author": "Carlo Collodi",
+      "gutenbergId": 500
+    },
+    {
+      "title": "The Princess and the Goblin",
+      "author": "George MacDonald",
+      "gutenbergId": 708
+    },
+    {
+      "title": "The Happy Prince and Other Tales",
+      "author": "Oscar Wilde",
+      "gutenbergId": 902
+    },
+    {
+      "title": "Andersen’s Fairy Tales",
+      "author": "Hans Christian Andersen",
+      "gutenbergId": 1597
+    },
+    {
+      "title": "Grimms’ Fairy Tales",
+      "author": "Jacob and Wilhelm Grimm",
+      "gutenbergId": 2591
+    },
+    {
+      "title": "The Railway Children",
+      "author": "E. Nesbit",
+      "gutenbergId": 1874
+    }
+  ],
+  "validationBitsPerChar": 1.8543,
+  "validation": {
+    "characters": 263918,
+    "share": 0.05,
+    "perBook": [
+      {
+        "title": "Alice’s Adventures in Wonderland",
+        "bitsPerChar": 1.8357,
+        "characters": 6989
+      },
+      {
+        "title": "Through the Looking-Glass, and What Alice Found There",
+        "bitsPerChar": 1.8995,
+        "characters": 7912
+      },
+      {
+        "title": "The Wonderful Wizard of Oz",
+        "bitsPerChar": 1.6781,
+        "characters": 10217
+      },
+      {
+        "title": "The Marvelous Land of Oz",
+        "bitsPerChar": 1.9345,
+        "characters": 11450
+      },
+      {
+        "title": "Peter Pan",
+        "bitsPerChar": 1.7604,
+        "characters": 11505
+      },
+      {
+        "title": "Anne of Green Gables",
+        "bitsPerChar": 1.8372,
+        "characters": 27154
+      },
+      {
+        "title": "The Secret Garden",
+        "bitsPerChar": 1.7894,
+        "characters": 20585
+      },
+      {
+        "title": "A Little Princess",
+        "bitsPerChar": 1.7441,
+        "characters": 17632
+      },
+      {
+        "title": "Treasure Island",
+        "bitsPerChar": 1.9805,
+        "characters": 17597
+      },
+      {
+        "title": "The Jungle Book",
+        "bitsPerChar": 2.1444,
+        "characters": 13162
+      },
+      {
+        "title": "Just So Stories",
+        "bitsPerChar": 2.0432,
+        "characters": 7449
+      },
+      {
+        "title": "Black Beauty",
+        "bitsPerChar": 1.9052,
+        "characters": 13419
+      },
+      {
+        "title": "The Wind in the Willows",
+        "bitsPerChar": 1.9517,
+        "characters": 15665
+      },
+      {
+        "title": "The Adventures of Pinocchio",
+        "bitsPerChar": 1.7897,
+        "characters": 10468
+      },
+      {
+        "title": "The Princess and the Goblin",
+        "bitsPerChar": 1.6932,
+        "characters": 12811
+      },
+      {
+        "title": "The Happy Prince and Other Tales",
+        "bitsPerChar": 1.8974,
+        "characters": 3850
+      },
+      {
+        "title": "Andersen’s Fairy Tales",
+        "bitsPerChar": 1.8124,
+        "characters": 14613
+      },
+      {
+        "title": "Grimms’ Fairy Tales",
+        "bitsPerChar": 1.8077,
+        "characters": 25574
+      },
+      {
+        "title": "The Railway Children",
+        "bitsPerChar": 1.8677,
+        "characters": 15866
+      }
+    ],
+    "note": "The last 5% of each book, read from a blank memory; never trained on."
+  },
+  "training": {
+    "characters": 5121059,
+    "epochs": 8,
+    "bestEpoch": 8,
+    "streams": 40,
+    "steps": 100,
+    "resetProbability": 0.1,
+    "learningRate": 0.001,
+    "finalLearningRate": 0.00005,
+    "clipNorm": 1,
+    "warmupSteps": 150,
+    "recurrentInitialization": "orthogonal, gain 1",
+    "seed": 20261119,
+    "seconds": 6026,
+    "history": [
+      {
+        "epoch": 1,
+        "trainBits": 2.6281,
+        "validationBits": 2.2526
+      },
+      {
+        "epoch": 2,
+        "trainBits": 2.1411,
+        "validationBits": 2.0745
+      },
+      {
+        "epoch": 3,
+        "trainBits": 2.0155,
+        "validationBits": 1.9921
+      },
+      {
+        "epoch": 4,
+        "trainBits": 1.9448,
+        "validationBits": 1.9421
+      },
+      {
+        "epoch": 5,
+        "trainBits": 1.8953,
+        "validationBits": 1.9041
+      },
+      {
+        "epoch": 6,
+        "trainBits": 1.8591,
+        "validationBits": 1.8776
+      },
+      {
+        "epoch": 7,
+        "trainBits": 1.8339,
+        "validationBits": 1.8608
+      },
+      {
+        "epoch": 8,
+        "trainBits": 1.8196,
+        "validationBits": 1.8543
+      }
+    ]
+  },
+  "sources": [
+    {
+      "gutenbergId": 11,
+      "sha256": "a3a27f8edbf7fcd9b8ba8435494440e24952deaa3e2f2d65192d4cb7ca403754"
+    },
+    {
+      "gutenbergId": 12,
+      "sha256": "4b4733954ef0679d22ee1b811ed6f5553a39bb53bd0da40cc8e6e7f95de15ea5"
+    },
+    {
+      "gutenbergId": 55,
+      "sha256": "28f216c60a662e8e4464f8ecdfafaa41842ff5c197664807884caa0cc2e21a54"
+    },
+    {
+      "gutenbergId": 54,
+      "sha256": "624b666cf529031c608ae50cf90a25b9fb0257b93cbefd0385008cecda6d3104"
+    },
+    {
+      "gutenbergId": 16,
+      "sha256": "b7b2a3fef03a02ed6e5e3c61d92f8199e50fe810d992335f0b59df60acaddba7"
+    },
+    {
+      "gutenbergId": 45,
+      "sha256": "30312750954df9a0b73b8c97f34e11b0de3cd36cc370c233a4e27d5fcfa80857"
+    },
+    {
+      "gutenbergId": 113,
+      "sha256": "d32430dd84c5040c634ddeff82c90712fefe86d8f68848a687334e6fb0608c6f"
+    },
+    {
+      "gutenbergId": 146,
+      "sha256": "dcc3e1b9be9cdb56f2ffc57bc588271639710becbba6248e4bbebf133e120145"
+    },
+    {
+      "gutenbergId": 120,
+      "sha256": "f65a6168abcaaa8d31d1aa31992edb8bb21e54210b7b755c44cfb5e5ee90a5c6"
+    },
+    {
+      "gutenbergId": 236,
+      "sha256": "f046661b8c5afb25402a84eb2dddd48fefae6dcbcf4e8c434861bdbd107d571c"
+    },
+    {
+      "gutenbergId": 2781,
+      "sha256": "18f8327c5d85c370333bb9b0ba989517821560012db858d1e52df54c9130ea6c"
+    },
+    {
+      "gutenbergId": 271,
+      "sha256": "7e4e9a073504044e83af53fb1d729348c6d6ff7cce9a2d9c9513b9632f77b0a5"
+    },
+    {
+      "gutenbergId": 289,
+      "sha256": "9d07138ca7a6dd98c0f93a74dde2418053a1e49b05bc4e0cba25901d99cb4dc5"
+    },
+    {
+      "gutenbergId": 500,
+      "sha256": "aa2ff66b58dc1c02549ab6b03d5a441f88c26506c0fa7c2930333f5d961b673e"
+    },
+    {
+      "gutenbergId": 708,
+      "sha256": "04452575734f147eb6cdcca0bf4988aeca919f10d462c6f616c7699d5722e452"
+    },
+    {
+      "gutenbergId": 902,
+      "sha256": "39ce6e37a65b38f2f6af5a25345e7313c05de8480aeb578b1d41a9ddf5965c7b"
+    },
+    {
+      "gutenbergId": 1597,
+      "sha256": "b68136f61260d1b865c45ba7c27a0ec616eb319d8339dbcb7564fcaae0ef1470"
+    },
+    {
+      "gutenbergId": 2591,
+      "sha256": "9cc46ae4c6cd2a2901ded02e1e647855f303f1a4b6cae3ab1d49fdd0f9b3b62d"
+    },
+    {
+      "gutenbergId": 1874,
+      "sha256": "4847f211c6416621f7e74afe24d3e7e7d7182a8821fb989abf85d92b86b88b5e"
+    }
+  ],
+  "notableCells": [
+    {
+      "feature": "quote",
+      "description": "inside a quotation",
+      "cell": 431,
+      "correlation": -0.291
+    },
+    {
+      "feature": "parenthesis",
+      "description": "inside parentheses",
+      "cell": 431,
+      "correlation": 0.01
+    },
+    {
+      "feature": "word",
+      "description": "letters into the current word",
+      "cell": 104,
+      "correlation": 0.455
+    },
+    {
+      "feature": "paragraph",
+      "description": "characters into the paragraph",
+      "cell": 431,
+      "correlation": 0.12
+    }
+  ],
+  "reference": {
+    "note": "Measured on the held-out text (the last 5% of each book, read from a blank memory) with the shipped weights. Accuracy covers every held-out character; the memory span covers 2010 evenly spaced guesses with at least 200 characters before them, each traced 200 characters back from its likeliest next character, as the page's span view does.",
+    "accuracy": {
+      "guesses": 263899,
+      "firstGuess": 0.6127,
+      "topThree": 0.8094
+    },
+    "memorySpan": {
+      "guesses": 2010,
+      "reach": 200,
+      "halfReach": 4,
+      "ninetyReach": 14,
+      "byDistance": [
+        0.1768,
+        0.1331,
+        0.1145,
+        0.09768,
+        0.07764,
+        0.06011,
+        0.05044,
+        0.04104,
+        0.03306,
+        0.02728,
+        0.02211,
+        0.01833,
+        0.01575,
+        0.01352,
+        0.01145,
+        0.01017,
+        0.008784,
+        0.007531,
+        0.006645,
+        0.005838,
+        0.00537,
+        0.004711,
+        0.004328,
+        0.0038,
+        0.003515,
+        0.003292,
+        0.003016,
+        0.002759,
+        0.002486,
+        0.002275,
+        0.002165,
+        0.001859,
+        0.001798,
+        0.001695,
+        0.001543,
+        0.001474,
+        0.001426,
+        0.001341,
+        0.001202,
+        0.001123,
+        0.00109,
+        0.0009823,
+        0.0009027,
+        0.0008331,
+        0.0007787,
+        0.0007727,
+        0.000696,
+        0.0006703,
+        0.0006278,
+        0.0005882,
+        0.0005396,
+        0.0005255,
+        0.0004885,
+        0.0004608,
+        0.0004464,
+        0.0003912,
+        0.0003773,
+        0.0003684,
+        0.0003213,
+        0.0003228,
+        0.0002889,
+        0.0002793,
+        0.0002577,
+        0.0002525,
+        0.0002346,
+        0.0002139,
+        0.0001966,
+        0.0001877,
+        0.0001785,
+        0.0001605,
+        0.000156,
+        0.0001561,
+        0.000139,
+        0.0001281,
+        0.0001134,
+        0.0001107,
+        0.0001133,
+        0.00009474,
+        0.00009084,
+        0.00008574,
+        0.00008609,
+        0.00008231,
+        0.00007284,
+        0.00007436,
+        0.0000631,
+        0.00006462,
+        0.00005652,
+        0.00005329,
+        0.00005139,
+        0.0000474,
+        0.00004221,
+        0.00004091,
+        0.00003885,
+        0.00003864,
+        0.00003653,
+        0.00003229,
+        0.00003167,
+        0.00002874,
+        0.00002674,
+        0.0000266,
+        0.00002737,
+        0.00002456,
+        0.00002295,
+        0.00002261,
+        0.00001945,
+        0.00001848,
+        0.00001835,
+        0.00001652,
+        0.00001671,
+        0.00001555,
+        0.00001433,
+        0.00001226,
+        0.00001225,
+        0.0000116,
+        0.0000111,
+        0.00001092,
+        0.000009588,
+        0.000009426,
+        0.000008624,
+        0.000008284,
+        0.000007718,
+        0.000006735,
+        0.000006703,
+        0.000006118,
+        0.00000594,
+        0.000005262,
+        0.000005209,
+        0.000005043,
+        0.000004787,
+        0.000004396,
+        0.000004657,
+        0.000003822,
+        0.000003455,
+        0.000003438,
+        0.00000315,
+        0.000002971,
+        0.000002998,
+        0.000002434,
+        0.000002367,
+        0.000002625,
+        0.000001956,
+        0.000001965,
+        0.000001772,
+        0.000001964,
+        0.000001726,
+        0.000001613,
+        0.000001633,
+        0.000001284,
+        0.000001313,
+        0.000001227,
+        0.000001209,
+        0.000001017,
+        0.00000102,
+        0.000001071,
+        8.435e-7,
+        9.611e-7,
+        8.658e-7,
+        7.304e-7,
+        7.789e-7,
+        7.81e-7,
+        5.365e-7,
+        6.678e-7,
+        5.874e-7,
+        6.511e-7,
+        4.68e-7,
+        5.088e-7,
+        4.603e-7,
+        6.239e-7,
+        4.471e-7,
+        3.542e-7,
+        4.342e-7,
+        3.655e-7,
+        3.051e-7,
+        3.086e-7,
+        2.783e-7,
+        3.101e-7,
+        2.513e-7,
+        2.463e-7,
+        2.647e-7,
+        2.103e-7,
+        2.297e-7,
+        2.026e-7,
+        1.75e-7,
+        1.878e-7,
+        1.86e-7,
+        1.552e-7,
+        1.529e-7,
+        1.57e-7,
+        1.339e-7,
+        1.222e-7,
+        9.744e-8,
+        9.716e-8,
+        1.031e-7,
+        1.261e-7,
+        1.083e-7,
+        8.447e-8,
+        8.099e-8,
+        9.352e-8,
+        8.053e-8,
+        6.169e-8
+      ]
+    }
+  }
+}

@@ -28,6 +28,7 @@
     <defs>
       <symbol id="i-network" viewBox="0 0 24 24"><path d="m6 7 6 5 6-5M6 17l6-5 6 5"/><circle cx="4" cy="5" r="2"/><circle cx="4" cy="19" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="20" cy="19" r="2"/></symbol>
       <symbol id="i-digits" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M9.2 9.6c.5-1.9 5.4-2.1 5.4.6 0 2.3-4.2 3.6-5.6 5.9h5.9"/></symbol>
+      <symbol id="i-autoencoder" viewBox="0 0 24 24"><path d="M3.5 5 10 9.5v5L3.5 19zM20.5 5 14 9.5v5l6.5 4.5z"/><circle cx="12" cy="12" r="1.1"/></symbol>
       <symbol id="i-recurrent" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.6 3.9v4.4h-4.4"/><circle cx="12" cy="12" r="2.2"/></symbol>
       <symbol id="i-attention" viewBox="0 0 24 24"><circle cx="4.5" cy="17.5" r="2"/><circle cx="12" cy="17.5" r="2"/><circle cx="19.5" cy="17.5" r="2"/><path d="M4.5 15.2c.6-7.4 14.4-7.4 15 0M12 15.2c.4-4 7.1-4 7.5 0"/></symbol>
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
@@ -54,6 +55,7 @@
         <span class="nav-indicator" aria-hidden="true"></span>
         <a class="nav-button" href="/" aria-label="Playground" data-model="playground"><svg class="icon" aria-hidden="true"><use href="#i-network"/></svg><span>Playground</span></a>
         <a class="nav-button" href="/cnn/" aria-label="Digits" data-model="cnn"><svg class="icon" aria-hidden="true"><use href="#i-digits"/></svg><span>Digits</span></a>
+        <a class="nav-button" href="/vae/" aria-label="Autoencoder" data-model="vae"><svg class="icon" aria-hidden="true"><use href="#i-autoencoder"/></svg><span>Autoencoder</span></a>
         <a class="nav-button is-active" href="/rnn/" aria-current="page" aria-label="Recurrent" data-model="rnn"><svg class="icon" aria-hidden="true"><use href="#i-recurrent"/></svg><span>Recurrent</span></a>
         <a class="nav-button" href="/transformer/" aria-label="Transformer" data-model="transformer"><svg class="icon" aria-hidden="true"><use href="#i-attention"/></svg><span>Transformer</span></a>
       </nav>
@@ -161,15 +163,84 @@
       </section>
     </div>
 
+    <section id="gates-panel" class="panel gates-panel is-loading is-empty" aria-labelledby="gates-heading" aria-busy="true">
+      <div class="panel-heading"><h2 id="gates-heading">Why gates matter</h2></div>
+      <div class="stage-body">
+        <p class="gates-intro">A second network reads the same text: an ordinary recurrent network with no gates, trained on the same books for just as long. To have about as many parameters as the LSTM, it gets twice the memory, <span id="gates-units">512</span> numbers instead of 256, yet it forgets older text sooner.</p>
+        <p id="gates-status" class="gates-status" role="status">Loading the network without gates…</p>
+        <div id="gates-timeline" class="timeline gates-timeline">
+          <div id="gates-track" class="timeline-track">
+            <div class="track-label"><span class="track-title">LSTM</span> <span id="gates-lstm-note" class="track-note"></span></div>
+            <canvas id="gates-lstm-span" class="span-bars" role="img" aria-label="What shaped the LSTM’s guess"></canvas>
+            <ol id="gates-lstm-chars" class="char-cells" aria-hidden="true"></ol>
+            <div class="track-label"><span class="track-title">Gateless network</span> <span id="gates-rnn-note" class="track-note"></span></div>
+            <canvas id="gates-rnn-span" class="span-bars" role="img" aria-label="What shaped the gateless network’s guess"></canvas>
+            <ol id="gates-rnn-chars" class="char-cells" role="listbox" aria-label="Characters read, tinted by how surprising each was to the gateless network" aria-orientation="horizontal"></ol>
+            <div class="track-label"><span class="track-title">Inside a quotation</span> <span id="quote-note" class="track-note"></span></div>
+            <canvas id="quote-chart" class="quote-chart" role="img" aria-label="The LSTM’s quotation cell and the gateless network’s closest unit over the text"></canvas>
+            <span id="gates-marker" class="step-marker" aria-hidden="true" hidden></span>
+          </div>
+        </div>
+        <div class="gates-grid">
+          <figure class="fade-figure">
+            <figcaption>
+              <h3 class="gates-title">How fast memory fades</h3>
+              <span class="gates-subtitle">Each earlier character’s average share of what shaped a guess, by how far back it is, on a log scale</span>
+              <span class="fade-key">
+                <span class="key-item"><svg class="key-line is-lstm" viewBox="0 0 26 8" aria-hidden="true"><line x1="1" y1="4" x2="25" y2="4"/></svg>LSTM</span>
+                <span class="key-item"><svg class="key-line is-rnn" viewBox="0 0 26 8" aria-hidden="true"><line x1="1" y1="4" x2="25" y2="4"/></svg>Gateless network</span>
+                <span class="key-item"><svg class="key-line is-reference" viewBox="0 0 26 8" aria-hidden="true"><line x1="2" y1="4" x2="24" y2="4"/></svg>Text neither trained on</span>
+                <span id="fade-text-key" class="key-item" hidden><svg class="key-line is-text" viewBox="0 0 26 8" aria-hidden="true"><line x1="1" y1="4" x2="25" y2="4"/></svg>This text</span>
+                <span id="fade-text-hint" class="key-hint">A text of 150 characters or more adds its own curves</span>
+              </span>
+            </figcaption>
+            <svg id="fade-chart" class="fade-chart" role="img" aria-label="How a guess’s pull fades with distance, on a logarithmic scale"></svg>
+            <p id="fade-summary" class="gates-small"></p>
+          </figure>
+          <div class="gates-side">
+            <table id="gates-scores" class="gates-scores">
+              <caption class="gates-title">How often each is right on this text</caption>
+              <thead><tr><td></td><th scope="col">First guess</th><th scope="col">Within three</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">LSTM</th><td id="score-lstm-first" class="readout">–</td><td id="score-lstm-three" class="readout">–</td></tr>
+                <tr><th scope="row">Gateless network</th><td id="score-rnn-first" class="readout">–</td><td id="score-rnn-three" class="readout">–</td></tr>
+              </tbody>
+            </table>
+            <p id="scores-held-out" class="gates-small"></p>
+            <div id="quote-evidence" class="quote-evidence" hidden>
+              <h3 class="gates-title">Keeping track of a quotation</h3>
+              <p class="quote-bar"><span>LSTM, <span id="quote-lstm-cell">cell</span></span><span class="bar" aria-hidden="true"><i id="quote-lstm-bar"></i></span><span id="quote-lstm-r" class="readout"></span></p>
+              <p class="quote-bar"><span>Gateless, <span id="quote-rnn-cell">unit</span></span><span class="bar" aria-hidden="true"><i id="quote-rnn-bar"></i></span><span id="quote-rnn-r" class="readout"></span></p>
+              <p id="quote-summary" class="gates-small"></p>
+            </div>
+          </div>
+        </div>
+        <div class="gates-continue">
+          <div class="continue-heading">
+            <div><h3 class="gates-title">Let each one continue the text</h3><span class="gates-subtitle">Both pick every character from their five likeliest, at the temperature set above, as Generate does.</span></div>
+            <button id="continue-button" class="button subtle small" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#i-sparkle"/></svg>Write with both</button>
+          </div>
+          <div id="continue-results" class="continue-results" aria-live="polite" hidden>
+            <p class="continuation"><span class="continuation-label">LSTM</span><span id="continue-lstm" class="continuation-text"></span></p>
+            <p class="continuation"><span class="continuation-label">Gateless network</span><span id="continue-rnn" class="continuation-text"></span></p>
+          </div>
+        </div>
+        <div class="memory-notes gates-notes">
+          <p class="callout-note">Without gates, every step squashes the whole memory through the same <strong>tanh</strong>, so a character’s pull shrinks by about the same factor with every character that follows. Up close that hardly shows; from about fifty characters back, it does.</p>
+          <p class="callout-note">The LSTM’s <strong>forget gate</strong> can hold a cell’s memory almost unchanged for dozens of characters. That is how it keeps track of an open quote.</p>
+        </div>
+      </div>
+    </section>
+
     <article class="learning-section" aria-labelledby="rnn-guide-heading">
       <div class="section-intro"><h2 id="rnn-guide-heading">Memory, one character at a time.</h2><p>A recurrent network keeps no copy of the text. Everything it knows about what came before has to fit in the memory it carries forward.</p></div>
       <div class="guide-grid">
         <section class="guide-card"><h3>It reads one character at a time</h3><p>Each character updates the memory, and the memory alone predicts the next character. Once read, a character is gone; only what the memory kept of it can still help.</p></section>
         <section class="guide-card"><h3>Gates decide what to keep, write and reveal</h3><p>For every cell, the forget gate decides how much of the old memory to keep, the input gate how much new information to write, and the output gate how much of the memory to reveal to the prediction. Each is a number between 0 and 1.</p></section>
-        <section class="guide-card"><h3>Why memory fades</h3><p>Every step multiplies the old memory by a forget gate, so a character’s influence shrinks as more text arrives unless the gates hold it open. That’s why its own sentences drift: it remembers the last dozen or so characters well, enough to finish a word, but not enough to keep a thought going. The <a href="/transformer/">Transformer</a> avoids this: attention looks back at every earlier token directly instead of carrying a memory forward.</p></section>
+        <section class="guide-card"><h3>Why memory fades</h3><p>Every step multiplies the old memory by a forget gate, so a character’s influence shrinks as more text arrives unless the gates hold it open. Without gates nothing can hold it open: every step shrinks the pull of older text by about the same factor, so it fades away steadily. Even the LSTM remembers only the last dozen or so characters well, enough to finish a word but not to keep a thought going, which is why its own sentences drift. The <a href="/transformer/">Transformer</a> avoids this: attention looks back at every earlier token directly instead of carrying a memory forward.</p></section>
       </div>
       <details class="credits"><summary>Model and credits<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
-        <p>The network is a long short-term memory (LSTM) with one layer of 256 cells and about 346,000 parameters, trained for this site on nineteen public-domain children’s books from <a href="https://www.gutenberg.org/">Project Gutenberg</a>, among them <cite>Alice’s Adventures in Wonderland</cite>, <cite>The Wonderful Wizard of Oz</cite>, <cite>Peter Pan</cite>, <cite>The Jungle Book</cite>, <cite>Treasure Island</cite>, <cite>The Secret Garden</cite>, <cite>The Wind in the Willows</cite>, <cite>Anne of Green Gables</cite>, and the fairy tales of the Brothers Grimm and Hans Christian Andersen. Paragraphs with the period slurs some of these books use were left out. The last 5% of each book was held out from training; on that text it averages <span id="validation-bits" class="readout">about 2</span> bits per character. It runs entirely in your browser; nothing you type leaves your device.</p>
+        <p>The network is a long short-term memory (LSTM) with one layer of 256 cells and about 346,000 parameters, trained for this site on nineteen public-domain children’s books from <a href="https://www.gutenberg.org/">Project Gutenberg</a>, among them <cite>Alice’s Adventures in Wonderland</cite>, <cite>The Wonderful Wizard of Oz</cite>, <cite>Peter Pan</cite>, <cite>The Jungle Book</cite>, <cite>Treasure Island</cite>, <cite>The Secret Garden</cite>, <cite>The Wind in the Willows</cite>, <cite>Anne of Green Gables</cite>, and the fairy tales of the Brothers Grimm and Hans Christian Andersen. Paragraphs with the period slurs some of these books use were left out. The last 5% of each book was held out from training; on that text it averages <span id="validation-bits" class="readout">about 2</span> bits per character. The network it is compared with has no gates: one layer of 512 units, h = tanh(W<sub>x</sub>x + Uh + b), with about 329,000 parameters, trained the same way on the same books. On the same held-out text it averages <span id="gates-validation-bits" class="readout">about 2</span> bits per character. Both run entirely in your browser; nothing you type leaves your device.</p>
       </details>
     </article>
   </main>
