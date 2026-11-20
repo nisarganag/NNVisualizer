@@ -15,9 +15,11 @@
 .dock-controls { display: flex; flex: 0 1 auto; align-items: flex-end; flex-wrap: wrap; gap: 14px 18px; min-width: 0; }
 .prompt-field { flex: 1 1 340px; min-width: 0; }
 .prompt-field label, .prompt-dock .control label { display: block; margin-bottom: 6px; color: var(--ink-3); font-size: 12.5px; font-weight: 500; }
-.prompt-field input { width: 100%; height: 44px; padding: 0 14px; border: 1px solid transparent; border-radius: var(--radius-control); background: var(--well); color: var(--ink); font-size: 16px; font-weight: 500; transition: background-color .2s, border-color .2s; }
-.prompt-field input:hover { background: var(--well-hover); }
-.prompt-field input:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+/* Line breaks are tokens too, so the prompt is a text area: one line tall like a field, growing with the text
+   (main.ts sets its height) up to six lines, then scrolling. */
+.prompt-field textarea { display: block; width: 100%; min-height: 44px; max-height: 144px; padding: 11px 14px; overflow-y: auto; border: 1px solid transparent; border-radius: var(--radius-control); background: var(--well); color: var(--ink); font: inherit; font-size: 16px; font-weight: 500; line-height: 20px; resize: none; transition: background-color .2s, border-color .2s; }
+.prompt-field textarea:hover { background: var(--well-hover); }
+.prompt-field textarea:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 /* Widths rather than flex bases, so the controls group sizes to them and stays on one row when there is room. */
 .prompt-examples { flex: 0 1 auto; width: 170px; }
 .prompt-examples select { height: 44px; }
@@ -28,6 +30,15 @@
 .sampling-control { display: flex; align-items: flex-end; gap: 12px; flex: 0 1 auto; width: 330px; }
 .sampling-heading { display: grid; gap: 6px; }
 .sampling-heading .field-label { font-size: 12.5px; }
+
+/* Where the model runs: a quiet line under the dock, with the last run's time and the choice of processor. */
+.engine { display: flex; flex: 1 1 100%; flex-wrap: wrap; align-items: center; gap: 6px 18px; min-height: 42px; padding-top: 10px; border-top: 1px solid var(--line); }
+.engine-state { min-width: 0; color: var(--ink-3); font-size: 13px; }
+.engine-name { color: var(--ink); font-weight: 600; }
+.engine-time { color: var(--ink-3); font-size: 12.5px; white-space: nowrap; }
+.engine-choice { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.engine-choice .field-label { white-space: nowrap; }
+.engine-choice .segmented button { min-width: 52px; justify-content: center; }
 
 /* The prompt as GPT-2 read it, each token tinted amber by how unexpected it was: none below 2 bits, strongest
    from 14. Every step keeps ink text above 4.5:1 on the dock surface in both themes. */

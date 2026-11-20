@@ -28,6 +28,7 @@
     <defs>
       <symbol id="i-network" viewBox="0 0 24 24"><path d="m6 7 6 5 6-5M6 17l6-5 6 5"/><circle cx="4" cy="5" r="2"/><circle cx="4" cy="19" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="20" cy="19" r="2"/></symbol>
       <symbol id="i-digits" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M9.2 9.6c.5-1.9 5.4-2.1 5.4.6 0 2.3-4.2 3.6-5.6 5.9h5.9"/></symbol>
+      <symbol id="i-recurrent" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.6 3.9v4.4h-4.4"/><circle cx="12" cy="12" r="2.2"/></symbol>
       <symbol id="i-attention" viewBox="0 0 24 24"><circle cx="4.5" cy="17.5" r="2"/><circle cx="12" cy="17.5" r="2"/><circle cx="19.5" cy="17.5" r="2"/><path d="M4.5 15.2c.6-7.4 14.4-7.4 15 0M12 15.2c.4-4 7.1-4 7.5 0"/></symbol>
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
       <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m-5-5 5 5 5-5M5 19.5h14"/></symbol>
@@ -54,6 +55,7 @@
         <span class="nav-indicator" aria-hidden="true"></span>
         <a class="nav-button" href="/" aria-label="Playground" data-model="playground"><svg class="icon" aria-hidden="true"><use href="#i-network"/></svg><span>Playground</span></a>
         <a class="nav-button" href="/cnn/" aria-label="Digits" data-model="cnn"><svg class="icon" aria-hidden="true"><use href="#i-digits"/></svg><span>Digits</span></a>
+        <a class="nav-button" href="/rnn/" aria-label="Recurrent" data-model="rnn"><svg class="icon" aria-hidden="true"><use href="#i-recurrent"/></svg><span>Recurrent</span></a>
         <a class="nav-button is-active" href="/transformer/" aria-current="page" aria-label="Transformer" data-model="transformer"><svg class="icon" aria-hidden="true"><use href="#i-attention"/></svg><span>Transformer</span></a>
       </nav>
       <div class="header-actions">
@@ -93,7 +95,7 @@
     <section class="prompt-dock" aria-label="Prompt and sampling">
       <div class="prompt-field">
         <label for="prompt-input">Prompt</label>
-        <input id="prompt-input" type="text" maxlength="240" autocomplete="off" spellcheck="false" value="The best way to learn something new is to">
+        <textarea id="prompt-input" rows="1" maxlength="240" autocomplete="off" spellcheck="false">The best way to learn something new is to</textarea>
         <div id="surprise" class="surprise" role="group" aria-label="How surprising each token was" hidden>
           <p id="surprise-text" class="surprise-text"></p>
           <p class="surprise-legend" title="How unlikely GPT-2 found each token, given the ones before it. Each extra bit means half as likely."><span class="surprise-scale" aria-hidden="true"><i data-surprise="1"></i><i data-surprise="2"></i><i data-surprise="3"></i><i data-surprise="4"></i></span>Stronger amber, more surprising</p>
@@ -125,6 +127,17 @@
           <div class="range-control dock-range">
             <label for="sampling-value"><span id="sampling-name">Keep the top k</span><span class="range-value"><span id="sampling-number">5</span></span></label>
             <input type="range" id="sampling-value" min="1" max="20" step="1" value="5">
+          </div>
+        </div>
+      </div>
+      <div id="engine" class="engine" hidden>
+        <p class="engine-state" aria-live="polite"><span id="engine-name" class="engine-name">Running on the CPU</span> <span id="engine-reason" class="engine-reason" hidden></span></p>
+        <p id="engine-time" class="engine-time readout"></p>
+        <div id="engine-choice" class="engine-choice" hidden>
+          <span class="field-label" id="engine-label">Run on</span>
+          <div class="segmented" role="radiogroup" aria-labelledby="engine-label">
+            <button type="button" role="radio" aria-checked="true" data-backend="gpu">GPU</button>
+            <button type="button" role="radio" aria-checked="false" data-backend="cpu">CPU</button>
           </div>
         </div>
       </div>
@@ -205,7 +218,7 @@
         <section class="guide-card"><h3>MLP and the next word</h3><p>An MLP then reshapes every token's vector on its own. After twelve blocks, the last vector is compared with all 50,257 token embeddings to score what comes next.</p></section>
       </div>
       <details class="credits"><summary>Model and credits<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
-        <p>GPT-2 small and its tokenizer are by OpenAI, released under the MIT license. This page runs the original weights, converted to 8-bit blocks with exact values kept where rounding would change predictions; next-token probabilities stay within a fraction of a percentage point of the original. Inference is Neural Network Visualizer's own TypeScript implementation, running in a Web Worker.</p>
+        <p>GPT-2 small and its tokenizer are by OpenAI, released under the MIT license. This page runs the original weights, converted to 8-bit blocks with exact values kept where rounding would change predictions; next-token probabilities stay within a fraction of a percentage point of the original. Inference is Neural Network Visualizer's own implementation, running in a Web Worker: WGSL kernels on your GPU through WebGPU where the browser allows it, and TypeScript on the CPU otherwise. The two agree to within rounding.</p>
         <p>The idea of exploring GPT-2 this way comes from <a href="https://poloclub.github.io/transformer-explainer/">Transformer Explainer</a> by Aeree Cho, Grace C. Kim, Alexander Karpekov, Alec Helbling, Jay Wang, Seongmin Lee, Benjamin Hoover and Polo Chau (Georgia Tech). This page is an independent design; no code or graphics are shared.</p>
       </details>
     </article>

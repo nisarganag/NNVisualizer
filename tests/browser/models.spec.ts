@@ -117,14 +117,20 @@ test('the header moves between models and brings back the same experiment', asyn
   await expect(page.locator('#main-part')).toHaveAttribute('aria-busy', 'false');
   await page.selectOption('#learningRate', '0.1');
   const experiment = new URL(page.url()).hash;
-  await page.getByRole('link', { name: 'Digits', exact: true }).click();
+  // The header's links; pages also link to each other in their text.
+  const nav = page.getByRole('navigation', { name: 'Models' });
+  await nav.getByRole('link', { name: 'Digits', exact: true }).click();
   await expect(page).toHaveURL(/\/cnn\/$/);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Draw a digit. Watch a CNN read it.');
-  await expect(page.getByRole('link', { name: 'Digits', exact: true })).toHaveAttribute('aria-current', 'page');
-  await page.getByRole('link', { name: 'Transformer', exact: true }).click();
+  await expect(nav.getByRole('link', { name: 'Digits', exact: true })).toHaveAttribute('aria-current', 'page');
+  await nav.getByRole('link', { name: 'Recurrent', exact: true }).click();
+  await expect(page).toHaveURL(/\/rnn\/$/);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Watch a network remember.');
+  await expect(nav.getByRole('link', { name: 'Recurrent', exact: true })).toHaveAttribute('aria-current', 'page');
+  await nav.getByRole('link', { name: 'Transformer', exact: true }).click();
   await expect(page).toHaveURL(/\/transformer\/$/);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Watch GPT-2 choose its next word.');
-  await page.getByRole('link', { name: 'Playground', exact: true }).click();
+  await nav.getByRole('link', { name: 'Playground', exact: true }).click();
   await expect(page.locator('#main-part')).toHaveAttribute('aria-busy', 'false');
   expect(new URL(page.url()).hash).toBe(experiment);
   await expect(page.locator('#learningRate')).toHaveValue('0.1');

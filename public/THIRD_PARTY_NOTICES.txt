@@ -199,6 +199,37 @@ public/models/mnist-samples-v1.bin contains ten digits from the MNIST test set,
 shared under the same license.
 
 
+Project Gutenberg books (training data only)
+--------------------------------------------
+The Recurrent page's network was trained on nineteen public-domain books from
+Project Gutenberg (https://www.gutenberg.org/):
+  #11    Alice's Adventures in Wonderland, by Lewis Carroll
+  #12    Through the Looking-Glass, and What Alice Found There, by Lewis Carroll
+  #55    The Wonderful Wizard of Oz, by L. Frank Baum
+  #54    The Marvelous Land of Oz, by L. Frank Baum
+  #16    Peter Pan, by J. M. Barrie
+  #45    Anne of Green Gables, by L. M. Montgomery
+  #113   The Secret Garden, by Frances Hodgson Burnett
+  #146   A Little Princess, by Frances Hodgson Burnett
+  #120   Treasure Island, by Robert Louis Stevenson
+  #236   The Jungle Book, by Rudyard Kipling
+  #2781  Just So Stories, by Rudyard Kipling
+  #271   Black Beauty, by Anna Sewell
+  #289   The Wind in the Willows, by Kenneth Grahame
+  #500   The Adventures of Pinocchio, by Carlo Collodi
+  #708   The Princess and the Goblin, by George MacDonald
+  #902   The Happy Prince and Other Tales, by Oscar Wilde
+  #1597  Andersen's Fairy Tales, by Hans Christian Andersen
+  #2591  Grimms' Fairy Tales, by Jacob and Wilhelm Grimm
+  #1874  The Railway Children, by E. Nesbit
+No Project Gutenberg file is distributed with Neural Network Visualizer. The
+training script (scripts/train-char-lstm.mjs) reads the books from a local
+download, removes the Project Gutenberg header, footer and license, and uses
+the text only to train public/models/char-lstm-v1.bin. Paragraphs containing
+period slurs were left out of training. The page's example sentences quote
+short passages from these public-domain works.
+
+
 Transformer Explainer (inspiration only)
 ----------------------------------------
 The Transformer page's approach is inspired by Transformer Explainer by Aeree

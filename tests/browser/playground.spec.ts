@@ -421,8 +421,11 @@ test('the backprop view shows how each weight is being pushed', async ({ page })
     .filter(animation => (animation.effect as KeyframeEffect)?.getKeyframes().some(frame => 'strokeDashoffset' in frame)).length))
     .toBeGreaterThan(0);
   await ready(page);
-  const widths = await page.locator('#network path.gradient-link').evaluateAll(paths => paths.map(path => parseFloat(getComputedStyle(path).strokeWidth)));
-  expect(Math.max(...widths)).toBeGreaterThan(Math.min(...widths));
+  // Widths ease to their new values (a 0.3 s transition), so wait for them to separate.
+  await expect.poll(async () => {
+    const widths = await page.locator('#network path.gradient-link').evaluateAll(paths => paths.map(path => parseFloat(getComputedStyle(path).strokeWidth)));
+    return Math.max(...widths) - Math.min(...widths);
+  }).toBeGreaterThan(0);
   expect(new URL(page.url()).hash).toContain('showBackprop=true');
 });
 

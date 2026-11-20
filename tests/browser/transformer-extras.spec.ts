@@ -61,4 +61,38 @@ test.describe('transformer extras', () => {
     await page.setViewportSize({ width: 320, height: 800 });
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
   });
+
+  test('line breaks GPT-2 writes stay in the prompt, so typing after them keeps its tokens', async ({ page }) => {
+    test.setTimeout(120_000);
+    await page.goto('/transformer/');
+    await page.getByRole('button', { name: 'Load the model' }).click();
+    await expect(page.locator('.candidate').first()).toBeVisible({ timeout: 90_000 });
+
+    // Greedy decoding (keep the top 1): after this sentence GPT-2 starts a new paragraph.
+    await page.locator('#sampling-value').evaluate((element: HTMLInputElement) => {
+      element.value = '1';
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await expect(page.locator('#sampling-number')).toHaveText('1');
+    const prompt = page.locator('#prompt-input');
+    const sentence = 'The dog was found in a field near the intersection of West and West Streets.';
+    await prompt.fill(sentence);
+    await expect(page.locator('#token-list .token')).toHaveCount(16);
+    const before = (await prompt.boundingBox())!.height;
+    const generate = page.getByRole('button', { name: 'Generate', exact: true });
+    for (const count of [17, 18]) {
+      await expect(page.locator('#transformer-flow')).toHaveAttribute('aria-busy', 'false');
+      await generate.click();
+      await expect(page.locator('#token-list .token')).toHaveCount(count);
+    }
+    await expect(prompt).toHaveValue(`${sentence}\n\n`);
+    // The box grows to show the new lines.
+    expect((await prompt.boundingBox())!.height).toBeGreaterThan(before);
+
+    // Typing after the line breaks reads the text again and finds the same tokens GPT-2 wrote.
+    await prompt.evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(element.value.length, element.value.length));
+    await prompt.pressSequentially('The dog');
+    await expect(page.locator('#token-list .token-id')).toHaveText(['464', '3290', '373', '1043', '287', '257', '2214', '1474', '262', '16246',
+      '286', '2688', '290', '2688', '27262', '13', '198', '198', '464', '3290']);
+  });
 });

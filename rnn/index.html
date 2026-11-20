@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f3f4f9">
+  <meta name="description" content="Type a sentence and watch a small LSTM read it one character at a time: its memory cells, its gates, how far back it remembers and what it expects next.">
+  <meta property="og:title" content="Recurrent — Neural Network Visualizer">
+  <meta property="og:description" content="Watch a network remember.">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <title>Recurrent — Neural Network Visualizer</title>
+  <script>
+    // Apply the saved or system theme before the first paint to avoid a flash.
+    (function () {
+      var theme;
+      try { theme = localStorage.getItem('nnvisualizer-theme'); } catch (error) { theme = null; }
+      if (theme !== 'light' && theme !== 'dark') {
+        theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      document.documentElement.dataset.theme = theme;
+      document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#0f121e' : '#f3f4f9';
+    })();
+  </script>
+</head>
+<body class="page-rnn">
+  <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs>
+      <symbol id="i-network" viewBox="0 0 24 24"><path d="m6 7 6 5 6-5M6 17l6-5 6 5"/><circle cx="4" cy="5" r="2"/><circle cx="4" cy="19" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="20" cy="19" r="2"/></symbol>
+      <symbol id="i-digits" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M9.2 9.6c.5-1.9 5.4-2.1 5.4.6 0 2.3-4.2 3.6-5.6 5.9h5.9"/></symbol>
+      <symbol id="i-recurrent" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.6 3.9v4.4h-4.4"/><circle cx="12" cy="12" r="2.2"/></symbol>
+      <symbol id="i-attention" viewBox="0 0 24 24"><circle cx="4.5" cy="17.5" r="2"/><circle cx="12" cy="17.5" r="2"/><circle cx="19.5" cy="17.5" r="2"/><path d="M4.5 15.2c.6-7.4 14.4-7.4 15 0M12 15.2c.4-4 7.1-4 7.5 0"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3.5c.6 4.4 2.6 6.4 7 7-4.4.6-6.4 2.6-7 7-.6-4.4-2.6-6.4-7-7 4.4-.6 6.4-2.6 7-7z"/><path d="M19 3v3m-1.5-1.5h3"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1.2" fill="currentColor" stroke="none"/><rect x="13.5" y="5" width="4" height="14" rx="1.2" fill="currentColor" stroke="none"/></symbol>
+    </defs>
+  </svg>
+  <noscript><p class="noscript">Enable JavaScript to run the recurrent network.</p></noscript>
+
+  <header class="app-header">
+    <div class="header-inner">
+      <a class="brand" href="/" aria-label="Neural Network Visualizer home">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <defs><clipPath id="brand-clip"><circle cx="16" cy="16" r="14"/></clipPath></defs>
+          <g clip-path="url(#brand-clip)">
+            <rect class="mark-negative" width="32" height="32"/>
+            <path class="mark-positive" d="M0 0h32v8.5c-8.2 1-10.6 10.9-19.6 13.6C8 23.4 3.6 23.3 0 22.4z"/>
+            <circle class="mark-point" cx="22.5" cy="8.5" r="2.1"/>
+          </g>
+        </svg>
+        <span class="brand-name">Neural Network Visualizer</span>
+      </a>
+      <nav class="main-nav" aria-label="Models">
+        <span class="nav-indicator" aria-hidden="true"></span>
+        <a class="nav-button" href="/" aria-label="Playground" data-model="playground"><svg class="icon" aria-hidden="true"><use href="#i-network"/></svg><span>Playground</span></a>
+        <a class="nav-button" href="/cnn/" aria-label="Digits" data-model="cnn"><svg class="icon" aria-hidden="true"><use href="#i-digits"/></svg><span>Digits</span></a>
+        <a class="nav-button is-active" href="/rnn/" aria-current="page" aria-label="Recurrent" data-model="rnn"><svg class="icon" aria-hidden="true"><use href="#i-recurrent"/></svg><span>Recurrent</span></a>
+        <a class="nav-button" href="/transformer/" aria-label="Transformer" data-model="transformer"><svg class="icon" aria-hidden="true"><use href="#i-attention"/></svg><span>Transformer</span></a>
+      </nav>
+      <div class="header-actions">
+        <button id="theme-toggle" class="icon-button theme-toggle" type="button" aria-label="Dark theme" aria-pressed="false" title="Switch to dark theme">
+          <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <mask id="theme-moon-mask"><rect width="24" height="24" fill="#fff"/><circle class="moon-bite" cx="17.5" cy="6.5" r="6" fill="#000"/></mask>
+            <circle class="sun-core" cx="12" cy="12" r="5" mask="url(#theme-moon-mask)"/>
+            <g class="sun-rays"><path d="M12 2.6v1.9M12 19.5v1.9M21.4 12h-1.9M4.5 12H2.6M18.65 5.35l-1.35 1.35M6.7 17.3l-1.35 1.35M18.65 18.65 17.3 17.3M6.7 6.7 5.35 5.35"/></g>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <section class="workspace-intro" aria-labelledby="rnn-heading">
+      <div class="intro-copy">
+        <h1 id="rnn-heading">Watch a network remember.</h1>
+        <p class="intro-description">A small recurrent network reads your text one character at a time, carrying a memory of 256 numbers from each character to the next. From nineteen children’s classics it learned how English is spelled and punctuated, but not what it means, so its own sentences sound like English without making sense.</p>
+      </div>
+    </section>
+
+    <section class="prompt-dock" aria-label="Text and sampling">
+      <div class="prompt-field">
+        <label for="prompt-input">Text</label>
+        <textarea id="prompt-input" rows="2" maxlength="400" autocomplete="off" spellcheck="false">"Where are you going?" asked the Scarecrow. "To the Emerald City," said Dorothy, "to see the great Oz."</textarea>
+        <p id="skipped-note" class="skipped-note" aria-live="polite" hidden></p>
+      </div>
+      <div class="dock-controls">
+        <div class="control prompt-examples"><label for="example-select">Examples</label><div class="select"><select id="example-select">
+          <option value="">Choose…</option>
+          <option>"Where are you going?" asked the Scarecrow. "To the Emerald City," said Dorothy, "to see the great Oz."</option>
+          <option>Once upon a time there was a king who had three daughters, and the youngest was so beautiful that</option>
+          <option>"I don't much care where," said Alice. "Then it doesn't matter which way you go," said the Cat.</option>
+          <option>The Mole had been working very hard all the morning, spring-cleaning his little home.</option>
+          <option>Mowgli ran with the wolves through the jungle, and Baloo the bear taught him the Law</option>
+          <option>The little robot walked to the edge of the sea and said, "Hello?"</option>
+        </select><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></div></div>
+        <button id="generate-button" class="button primary generate-button" type="button" aria-pressed="false" disabled><svg class="icon generate-icon" aria-hidden="true"><use href="#i-sparkle"/></svg><svg class="icon stop-icon" aria-hidden="true"><use href="#i-pause"/></svg><span id="generate-label">Generate</span></button>
+        <div class="range-control dock-range">
+          <label for="temperature"><span>Temperature</span><span class="range-value"><span id="temperature-value">0.6</span></span></label>
+          <input type="range" id="temperature" min="0.1" max="2" step="0.1" value="0.6">
+        </div>
+      </div>
+    </section>
+
+    <div id="rnn-workbench" class="rnn-workbench is-empty" aria-busy="true">
+      <section class="panel memory-panel" aria-labelledby="memory-heading">
+        <div class="panel-heading"><h2 id="memory-heading">Memory</h2><span class="stage-meta"><span id="step-count" class="readout">0</span> characters read, <span id="cell-count">256</span> memory cells</span></div>
+        <div class="stage-body">
+          <div class="surprise-key">
+            <p class="callout-note">Each box is one <strong>step</strong>: a character read. Hover or tap one to see what the network expected next, and what shaped that guess.</p>
+            <p class="surprise-legend" title="How unlikely the network found each character, given the ones before it. Each extra bit means half as likely."><span class="surprise-scale" aria-hidden="true"><i data-surprise="1"></i><i data-surprise="2"></i><i data-surprise="3"></i><i data-surprise="4"></i></span>Stronger amber, more surprising</p>
+          </div>
+          <div id="timeline" class="timeline">
+            <div id="timeline-track" class="timeline-track">
+              <div class="track-label"><span class="track-title">Memory span</span> <span id="span-summary" class="track-note"></span></div>
+              <canvas id="span-bars" class="span-bars" role="img" aria-label="How much each earlier character shaped the chosen step’s prediction"></canvas>
+              <ol id="char-cells" class="char-cells" role="listbox" aria-label="Characters read, tinted by how surprising each was" aria-orientation="horizontal"></ol>
+              <div class="track-label"><span class="track-title">Cell state <i class="math">c</i></span> <span class="track-note">the memory, one row per cell, <span class="text-positive">violet</span> above zero and <span class="text-negative">amber</span> below</span></div>
+              <div class="map-frame"><canvas id="cell-map" class="memory-map" tabindex="0" role="slider" aria-orientation="vertical" aria-valuemin="1" aria-valuemax="256" aria-valuenow="1" aria-label="Cell state of all 256 memory cells at every step. Use the up and down arrow keys to choose a cell, left and right to move along the text."></canvas><span class="unit-marker" data-for="cell-map" aria-hidden="true"></span></div>
+              <div class="track-label unit-label"><span id="unit-title" class="track-title">Cell</span> <span id="unit-note" class="track-note">its memory over the text</span><span id="cell-picks" class="cell-picks" hidden></span></div>
+              <canvas id="unit-chart" class="unit-chart" role="img" aria-label="The chosen cell’s state at every step"></canvas>
+              <div class="gate-strips">
+                <span class="track-label strip-label">Input gate</span><canvas class="gate-strip" data-gate="input" aria-hidden="true"></canvas>
+                <span class="track-label strip-label">Forget gate</span><canvas class="gate-strip" data-gate="forget" aria-hidden="true"></canvas>
+                <span class="track-label strip-label">Output gate</span><canvas class="gate-strip" data-gate="output" aria-hidden="true"></canvas>
+              </div>
+              <div class="track-label detail-label">
+                <div class="segmented" role="radiogroup" aria-label="Second map">
+                  <button type="button" role="radio" aria-checked="false" data-detail="hidden"><span>Hidden<span class="long-label"> state</span></span></button>
+                  <button type="button" role="radio" aria-checked="false" data-detail="input"><span>Input<span class="long-label"> gate</span></span></button>
+                  <button type="button" role="radio" aria-checked="true" data-detail="forget"><span>Forget<span class="long-label"> gate</span></span></button>
+                  <button type="button" role="radio" aria-checked="false" data-detail="output"><span>Output<span class="long-label"> gate</span></span></button>
+                </div>
+                <span id="detail-note" class="track-note"></span>
+              </div>
+              <div class="map-frame"><canvas id="detail-map" class="memory-map" tabindex="0" role="slider" aria-orientation="vertical" aria-valuemin="1" aria-valuemax="256" aria-valuenow="1" aria-label="Forget gate of all 256 memory cells at every step. Use the up and down arrow keys to choose a cell, left and right to move along the text."></canvas><span class="unit-marker" data-for="detail-map" aria-hidden="true"></span></div>
+              <span id="step-marker" class="step-marker" aria-hidden="true"></span>
+            </div>
+          </div>
+          <p id="map-readout" class="map-readout" aria-live="polite"></p>
+          <div class="memory-notes">
+            <p class="callout-note">Each row is one <strong>memory cell</strong>. Some switch on inside a word or a quote and hold until it ends. Hover or tap a row to follow that cell.</p>
+            <p class="callout-note">The <strong>bars</strong> above the text show how much each earlier character shaped the chosen guess. Watch them fade with distance.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel next-panel" aria-labelledby="next-heading">
+        <div class="panel-heading"><h2 id="next-heading">Next character</h2></div>
+        <div class="stage-body">
+          <p id="next-context" class="next-context">What could follow</p>
+          <ol id="candidate-list" class="candidate-list" aria-label="Most likely next characters"></ol>
+          <p id="next-actual" class="next-actual"></p>
+          <p class="callout-note">Beside each character is the <strong>word</strong> it would lead to if the network kept taking its likeliest letter. Lower the temperature for safer choices; raise it for surprises.</p>
+          <div id="scorecard" class="scorecard" hidden>
+            <h3 class="scorecard-title">How often it’s right on this text</h3>
+            <p class="score"><span id="score-first" class="score-value readout">–</span><span class="score-label">first guesses right</span></p>
+            <p class="score"><span id="score-three" class="score-value readout">–</span><span class="score-label">right within three guesses</span></p>
+            <p id="score-note" class="score-note"></p>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <article class="learning-section" aria-labelledby="rnn-guide-heading">
+      <div class="section-intro"><h2 id="rnn-guide-heading">Memory, one character at a time.</h2><p>A recurrent network keeps no copy of the text. Everything it knows about what came before has to fit in the memory it carries forward.</p></div>
+      <div class="guide-grid">
+        <section class="guide-card"><h3>It reads one character at a time</h3><p>Each character updates the memory, and the memory alone predicts the next character. Once read, a character is gone; only what the memory kept of it can still help.</p></section>
+        <section class="guide-card"><h3>Gates decide what to keep, write and reveal</h3><p>For every cell, the forget gate decides how much of the old memory to keep, the input gate how much new information to write, and the output gate how much of the memory to reveal to the prediction. Each is a number between 0 and 1.</p></section>
+        <section class="guide-card"><h3>Why memory fades</h3><p>Every step multiplies the old memory by a forget gate, so a character’s influence shrinks as more text arrives unless the gates hold it open. That’s why its own sentences drift: it remembers the last dozen or so characters well, enough to finish a word, but not enough to keep a thought going. The <a href="/transformer/">Transformer</a> avoids this: attention looks back at every earlier token directly instead of carrying a memory forward.</p></section>
+      </div>
+      <details class="credits"><summary>Model and credits<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+        <p>The network is a long short-term memory (LSTM) with one layer of 256 cells and about 346,000 parameters, trained for this site on nineteen public-domain children’s books from <a href="https://www.gutenberg.org/">Project Gutenberg</a>, among them <cite>Alice’s Adventures in Wonderland</cite>, <cite>The Wonderful Wizard of Oz</cite>, <cite>Peter Pan</cite>, <cite>The Jungle Book</cite>, <cite>Treasure Island</cite>, <cite>The Secret Garden</cite>, <cite>The Wind in the Willows</cite>, <cite>Anne of Green Gables</cite>, and the fairy tales of the Brothers Grimm and Hans Christian Andersen. Paragraphs with the period slurs some of these books use were left out. The last 5% of each book was held out from training; on that text it averages <span id="validation-bits" class="readout">about 2</span> bits per character. It runs entirely in your browser; nothing you type leaves your device.</p>
+      </details>
+    </article>
+  </main>
+  <footer class="app-footer"><span class="footer-brand">Neural Network Visualizer<span>Built for the moment it clicks.</span></span><div><a href="/THIRD_PARTY_NOTICES.txt">Open-source licenses</a></div></footer>
+  <p id="rnn-status" class="simulation-status" role="status" aria-live="polite" hidden></p>
+  <script type="module" src="/src/rnn/main.ts"></script>
+</body>
+</html>

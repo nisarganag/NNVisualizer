@@ -1,16 +1,17 @@
 # Neural Network Visualizer
 
-Three interactive neural networks you can look inside, in the browser:
+Four interactive neural networks you can look inside, in the browser:
 
 - **Playground**: build and train a small network, with the learning features of [TensorFlow Playground](https://github.com/tensorflow/playground).
 - **Digits**: draw a digit and watch a convolutional network trained on MNIST read it, filter by filter.
+- **Recurrent**: watch an LSTM read your text one character at a time, carrying its memory forward, and see how far back it remembers.
 - **Transformer**: run the real GPT-2 small and follow a prompt through tokens, embeddings, every attention head and MLP, to the next-word probabilities.
 
-A violet/amber signal palette makes behavior visible: violet is positive, amber is negative, and the rest of the interface stays neutral so color always means something. Everything runs in the browser, with training and GPT-2 in Web Workers; Vercel serves a static Vite build. No backend, database, environment variables, GPU service, or API keys are required.
+A violet/amber signal palette makes behavior visible: violet is positive, amber is negative, and the rest of the interface stays neutral so color always means something. Everything runs in the browser: training and GPT-2 run in Web Workers, and GPT-2 uses the visitor's own GPU through WebGPU where the browser allows it. Vercel serves a static Vite build. No backend, database, environment variables, server GPU, or API keys are required.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/studio-preview-dark.png">
-  <img alt="Neural Network Visualizer studio showing a network learning to classify two Gaussian clusters" src="docs/studio-preview.png">
+  <img alt="The Neural Network Visualizer playground: a small network learning to separate a circle of points from the ring around it" src="docs/studio-preview.png">
 </picture>
 
 ## Run locally
@@ -93,6 +94,22 @@ Hover over a connection or a neuron's small bias square and click to edit it. Ed
 - **Fool the network**: pick a digit and the page flips a few pixels of what the network sees, one small step at a time, until it reads that digit, usually after about 18 pixel changes. Changed pixels are outlined, and Undo restores the original.
 - About 52,000 parameters, trained in this repository on MNIST with rotation, scale, shift and stroke-width augmentation (`scripts/train-mnist-cnn.mjs`). Nothing you draw leaves the browser.
 
+### Recurrent
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/recurrent-preview-dark.png">
+  <img alt="The Recurrent page: an LSTM reading a line of dialogue, tracing the memory cell that tracks quotations" src="docs/recurrent-preview.png">
+</picture>
+
+- A long short-term memory network (one layer of 256 cells, about 346,000 parameters) reads your text one character at a time and carries its memory forward. Type up to 400 characters or choose an example; the views update as you type.
+- Each character is tinted by how surprising it was. Hover, focus or tap one (or move with the arrow keys) to see what the network expected next, at the temperature you set, and where the real next character ranked.
+- **Next character**: its ten likeliest next characters, each with the word it would lead to if the network kept taking its likeliest letter. After "the Tin Woodman " it expects *said*, *and* or *was*; after "the Tin Wood" it is sure of *Woodman*. A score shows how often it was right on your text, and that the start of a word, where it has to choose the next word, is the hard part.
+- **Memory**: a heatmap of all 256 cell states at every step (violet above zero, amber below), and a second map of the hidden state or the input, forget and output gates. Choose a row to trace that cell's memory and gates along the text.
+- **Memory span**: for the chosen step, how much each earlier character shaped the guess (the exact gradient back through time, times the input), and how many of the latest characters hold half and 90% of it. On held-out text, half usually comes from the last 4 characters and 90% from the last 17.
+- Cells that learned something recognizable are one click away: one tracks whether the text is inside a quotation (correlation −0.74 on held-out text), another counts the letters of the current word.
+- **Generate** writes 120 more characters at about 30 a second, each picked from the five likeliest at the chosen temperature (0.6 by default), and can be stopped at any point. About 98% of the words it writes are real, but its sentences don't make sense: a network this small learns how English looks, not what it means.
+- Trained in this repository with `scripts/train-char-lstm.mjs` on nineteen public-domain children's books from Project Gutenberg (5.1 million characters), from *Alice's Adventures in Wonderland* and *The Wonderful Wizard of Oz* to *The Jungle Book*, *Treasure Island* and the fairy tales of the Brothers Grimm and Hans Christian Andersen. Paragraphs with period slurs are left out of training. On the last 5% of each book, which it never trained on, it scores 1.77 bits per character and its first guess is right 62% of the time (82% within three guesses). Training takes about 1¾ hours on a 10-core M4; the weights take 1.4 MB.
+
 ### Transformer
 
 <picture>
@@ -105,6 +122,7 @@ Hover over a connection or a neuron's small bias square and click to edit it. Ed
 - Temperature, top-k and top-p update the probabilities instantly; **Generate** samples a token and appends it.
 - **How the guess forms**: what GPT-2 would predict if it stopped after the embedding and after each of the 12 blocks (a "logit lens"), for any token you focus. Select a row to open that block.
 - **Surprising words**: the prompt is tinted by how unexpected each token was to the model, in bits, so typos and odd word choices stand out.
+- **Runs on your GPU**: where the browser supports WebGPU, the worker runs GPT-2 with its own WGSL kernels (8-bit matrix products, layer norm, attention, the vocabulary and the surprise statistics) and keeps keys and values on the GPU. Everything the page draws comes from that run, and it matches the CPU path to within rounding: logits within 1e-4, the same top tokens, the same greedy continuation. On an Apple M4, measured in the page, a 9-token prompt takes about 27 ms instead of 0.75 s, a 45-token prompt 75 ms instead of 3.7 s, the logit lens 11 ms instead of 0.36 s, and each generated token about 10 ms instead of 87 ms. Browsers without WebGPU, and any GPU that fails a start-up check against the CPU, use the TypeScript path. A line under the prompt says which processor runs and how long the last run took, with a switch to compare them; `?backend=cpu` starts on the CPU.
 - The official weights are converted with `scripts/convert-gpt2.mjs` to 8-bit blocks of 64 with float16 scales. Eight embedding columns are kept exact, because GPT-2's final hidden state has a few outsized dimensions that would otherwise magnify rounding. Greedy decoding matches the float32 model token for token, and next-token probabilities stay within about 0.3 percentage points.
 - Inspired by [Transformer Explainer](https://poloclub.github.io/transformer-explainer/) (Georgia Tech Polo Club); the design and code here are independent.
 
@@ -138,8 +156,9 @@ flowchart LR
 | `src/studio.ts` | Playground shortcuts, clipboard sharing/fallback, and native control presentation |
 | `index.html`, `styles.css` | Playground page; shared theme tokens, typography, SVG icons, motion, and responsive design |
 | `cnn/index.html`, `src/cnn/` | Digits page: drawing pad, preprocessing and inference (`model.ts`), layer views |
-| `transformer/index.html`, `src/transformer/` | Transformer page: tokenizer, GPT-2 inference (`gpt2.ts`) in a worker, sampling, stage views |
-| `scripts/` | Reproducible model conversion (GPT-2) and training (MNIST CNN); downloaded data stays outside the repository |
+| `rnn/index.html`, `src/rnn/` | Recurrent page: text encoding, LSTM inference and backpropagation through time (`model.ts`), memory views |
+| `transformer/index.html`, `src/transformer/` | Transformer page: tokenizer, GPT-2 inference in a worker on the CPU (`gpt2.ts`) or the GPU through WebGPU (`gpu.ts`), sampling, stage views |
+| `scripts/` | Reproducible model conversion (GPT-2) and training (MNIST CNN, character LSTM); downloaded data stays outside the repository |
 | `public/models/` | Versioned model files served with the site |
 
 Only one automatic training request is in flight at a time. Each reset, data change, or parameter edit invalidates older snapshots. Manual epoch steps are queued explicitly. Each epoch preserves the reference's partial-batch accumulation and half-squared error, including its fixed Tanh classification output and linear regression output. Numerical divergence pauses training with a recovery message.
@@ -156,6 +175,8 @@ npm run test:e2e
 ```
 
 Or run `npm run check` once Chromium is installed. The browser suite uses the production build. GitHub Actions runs the same checks on pushes and pull requests.
+
+The browser suite has two Playwright projects. `chromium` runs every page in the headless shell, which has no WebGPU, so the Transformer page takes its CPU path there. `webgpu` runs `tests/browser/webgpu.spec.ts` in full Chromium on your machine's GPU and compares the result with the CPU path. CI runners have no GPU, so there it uses Chromium's software WebGPU (SwiftShader) and skips if the runner offers no adapter at all.
 
 The numerical regression fixture was independently captured from the live reference on 2026-11-19. It compares losses and selected parameters at epochs 0, 1, and 10 to 12 decimal places. Additional tests cover updates, partial batches, parameter edits, invalid URLs, empty-input models, worker resets, all datasets and model settings, sharing, teaching controls, local assets, and narrow layouts.
 

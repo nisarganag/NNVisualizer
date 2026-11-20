@@ -12,7 +12,22 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 1000 } } }],
+  projects: [
+    { name: 'chromium', testIgnore: /webgpu\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 1000 } } },
+    {
+      // The Transformer page's WebGPU path. Locally, full Chromium runs it on this machine's GPU. CI runners
+      // have no GPU, so the headless shell's software WebGPU (SwiftShader) stands in; the Linux flags are unverified.
+      name: 'webgpu',
+      testMatch: /webgpu\.spec\.ts$/,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1440, height: 1000 },
+        ...(process.env.CI
+          ? { launchOptions: { args: ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-webgpu-adapter=swiftshader', '--use-angle=swiftshader'] } }
+          : { channel: 'chromium' }),
+      },
+    },
+  ],
   webServer: {
     command: 'npm run preview -- --port 4173 --strictPort',
     url: 'http://127.0.0.1:4173',

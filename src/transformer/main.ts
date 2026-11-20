@@ -7,7 +7,7 @@ import { signalRange, THEME_CHANGE_EVENT } from '../palette';
 import { Gpt2Tokenizer } from './tokenizer';
 import { applySampling, sample, type SamplingResult, type SamplingSettings } from './sampling';
 import { MAX_TOKENS, MODEL_BASE, MODEL_CACHE } from './config';
-import type { LensRow, Trace, TransformerRequest, TransformerResponse } from './worker';
+import type { Backend, EngineState, GpuReason, LensRow, Trace, TransformerRequest, TransformerResponse } from './worker';
 import type { Gpt2Manifest } from './gpt2';
 
 initializeSite();
@@ -20,7 +20,7 @@ const HIDDEN = 4 * EMBD;
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const flow = $('transformer-flow');
-const promptInput = $<HTMLInputElement>('prompt-input');
+const promptInput = $<HTMLTextAreaElement>('prompt-input');
 const generateButton = $<HTMLButtonElement>('generate-button');
 const loadButton = $<HTMLButtonElement>('load-model');
 const statusLine = $('transformer-status');
@@ -34,6 +34,8 @@ let ready = false;
 let tokens: number[] = [];
 let trace: Trace | null = null;
 let traceTokens: number[] = [];
+/** The processor that computed the trace shown. */
+let traceBackend: Backend = 'cpu';
 let layer = 0;
 let head = 0;
 let focus = -1;
@@ -42,11 +44,21 @@ let arriving = -1;
 let headWeights: { layer: number; head: number; q: Float32Array; k: Float32Array; v: Float32Array } | null = null;
 let requestId = 0;
 let pending = false;
-let queued: number[] | null = null;
+/** The run in flight and the latest one asked for meanwhile, each with the processor it should use. */
+let inFlight: { tokens: number[]; backend: Backend } | null = null;
+let queued: { tokens: number[]; backend: Backend } | null = null;
+/**
+ * The processor the visitor wants. `?backend=cpu` starts on the CPU; `?backend=gpu` insists on the GPU,
+ * accepting a software one (such as SwiftShader), and still falls back when there is none.
+ */
+const backendParameter = new URLSearchParams(location.search).get('backend');
+let backend: Backend = backendParameter === 'cpu' ? 'cpu' : 'gpu';
+let engine: EngineState | null = null;
+let lastRun: { ms: number; fresh: number } | null = null;
 const settings: SamplingSettings = { temperature: .8, mode: 'top-k', k: 5, p: .9 };
 let result: SamplingResult | null = null;
-/** The latest logit lens and the tokens and position it reads. */
-let lens: { tokens: number[]; position: number; rows: LensRow[] } | null = null;
+/** The latest logit lens, the tokens and position it reads, and the processor that computed it. */
+let lens: { tokens: number[]; position: number; rows: LensRow[]; backend: Backend } | null = null;
 let lensId = 0;
 let lensInFlight = false;
 let lensWanted = false;
@@ -392,6 +404,8 @@ function renderCandidates() {
     item.classList.toggle('is-filtered', !kept.has(id));
     item.classList.toggle('is-sampled', id === sampled);
     item.title = kept.has(id) ? `${(result.scaled[id] * 100).toFixed(2)}% before sampling filters` : 'Outside the sampling filter';
+    // The raw score, so tests can compare the GPU and CPU runs.
+    item.dataset.logit = String(trace.logits[id]);
   });
   items.slice(shown.length).forEach(item => item.remove());
   const share = result.kept.reduce((total, id) => total + result.scaled[id], 0);
@@ -405,8 +419,9 @@ function renderCandidates() {
 /* ---------- How the guess forms ---------- */
 
 /** Whether a lens reads the current tokens at the focused position. */
-const lensIsCurrent = (candidate: { tokens: number[]; position: number } | null) =>
-  candidate !== null && trace !== null && candidate.position === focusIndex() && candidate.tokens.join() === traceTokens.join();
+const lensIsCurrent = (candidate: { tokens: number[]; position: number; backend: Backend } | null) =>
+  candidate !== null && trace !== null && candidate.position === focusIndex() && candidate.tokens.join() === traceTokens.join()
+  && candidate.backend === traceBackend;
 
 /**
  * One row per stage: the embedding, then each block (a button that opens it).
@@ -533,10 +548,11 @@ document.querySelectorAll<HTMLCanvasElement>('canvas.matrix').forEach(canvas => 
 
 function request(next: number[]) {
   if (!ready || !next.length) return;
-  if (pending) { queued = next; return; }
+  if (pending) { queued = { tokens: next, backend }; return; }
   pending = true;
+  inFlight = { tokens: next, backend };
   flow.setAttribute('aria-busy', 'true');
-  send({ type: 'run', id: ++requestId, tokens: next });
+  send({ type: 'run', id: ++requestId, tokens: next, backend });
 }
 
 function updateTokens() {
@@ -552,7 +568,16 @@ function updateTokens() {
   request(tokens);
 }
 
+/** The prompt box grows with its text, line breaks included, up to its CSS maximum (then it scrolls). */
+function fitPrompt() {
+  promptInput.style.height = 'auto';
+  promptInput.style.height = `${promptInput.scrollHeight + promptInput.offsetHeight - promptInput.clientHeight}px`;
+}
+fitPrompt();
+document.fonts?.ready.then(fitPrompt);
+
 promptInput.addEventListener('input', () => {
+  fitPrompt();
   clearTimeout(typingTimer);
   // The next run brings new tokens; a lens now would only delay it.
   clearTimeout(lensTimer);
@@ -566,6 +591,7 @@ $<HTMLSelectElement>('example-select').addEventListener('change', event => {
   const select = event.target as HTMLSelectElement;
   if (!select.value) return;
   promptInput.value = select.value;
+  fitPrompt();
   select.value = '';
   updateTokens();
 });
@@ -578,7 +604,11 @@ generateButton.addEventListener('click', () => {
   tokens = [...traceTokens, next];
   arriving = tokens.length - 1;
   focus = -1;
+  // A text area keeps the line breaks GPT-2 writes, so editing afterwards re-reads the same text.
   promptInput.value = tokenizer.decode(tokens);
+  fitPrompt();
+  // Once the box has reached its full height, keep the newest token in view.
+  promptInput.scrollTop = promptInput.scrollHeight;
   request(tokens);
 });
 
@@ -619,7 +649,58 @@ document.querySelectorAll<HTMLButtonElement>('.segmented [data-mode]').forEach(b
 syncSamplingControls();
 
 window.addEventListener(THEME_CHANGE_EVENT, () => { buildRamps(); renderAll(); });
-window.addEventListener('resize', () => { if (trace) renderAll(); });
+window.addEventListener('resize', () => { fitPrompt(); if (trace) renderAll(); });
+
+/* ---------- Where the model runs ---------- */
+
+const gpuReasons: Record<GpuReason, string> = {
+  unsupported: 'because this browser doesn’t support WebGPU',
+  'no-adapter': 'because no GPU is available to this page',
+  device: 'because the GPU couldn’t start',
+  memory: 'because the GPU doesn’t have enough memory for the model',
+  mismatch: 'because the GPU’s results didn’t match the CPU’s',
+  lost: 'because the GPU stopped responding',
+  error: 'because the GPU ran into an error',
+};
+
+/** Milliseconds as people read them: one decimal for quick runs, seconds past one second. */
+function duration(ms: number): string {
+  if (ms < 10) return `${ms.toFixed(1)} ms`;
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(1)} s`;
+}
+
+/** Which processor runs the model and why, how long the last run took, and the choice between them. */
+function renderEngine() {
+  const box = $('engine');
+  box.hidden = !ready || !engine;
+  if (box.hidden) return;
+  const onGpu = engine.backend === 'gpu';
+  $('engine-name').textContent = onGpu ? 'Running on your GPU' : 'Running on the CPU';
+  const reason = $('engine-reason');
+  reason.textContent = !onGpu && engine.reason ? gpuReasons[engine.reason] : '';
+  reason.hidden = !reason.textContent;
+  const time = $('engine-time');
+  // A shortened prompt computes no new tokens, only the prediction after the new last one.
+  const count = lastRun?.fresh === 1 ? '1 token' : `${lastRun?.fresh.toLocaleString()} tokens`;
+  time.textContent = !lastRun ? '' : lastRun.fresh ? `${count} in ${duration(lastRun.ms)}` : `Updated in ${duration(lastRun.ms)}`;
+  time.title = lastRun ? 'How long the last run took' : '';
+  $('engine-choice').hidden = !engine.gpu;
+  document.querySelectorAll<HTMLButtonElement>('#engine-choice [data-backend]').forEach(button => {
+    button.setAttribute('aria-checked', String(button.dataset.backend === backend));
+  });
+}
+
+document.querySelectorAll<HTMLButtonElement>('#engine-choice [data-backend]').forEach(button => {
+  button.addEventListener('click', () => {
+    const next = button.dataset.backend as Backend;
+    if (next === backend) return;
+    backend = next;
+    renderEngine();
+    // Rerun the current tokens from scratch on the chosen processor, so the times compare.
+    request(trace ? traceTokens : tokens);
+  });
+});
 
 /* ---------- Worker ---------- */
 
@@ -633,21 +714,34 @@ worker.onmessage = ({ data }: MessageEvent<TransformerResponse>) => {
     $('load-status').textContent = data.cached
       ? `Opening from this browser, ${megabytes(data.loaded)} of ${megabytes(data.total)} MB`
       : `Downloading ${megabytes(data.loaded)} of ${megabytes(data.total)} MB`;
+  } else if (data.type === 'preparing') {
+    $('load-status').textContent = 'Setting up your GPU';
   } else if (data.type === 'ready') {
     ready = true;
+    engine = data.engine;
     $('model-loader').classList.add('is-loaded');
     setStatus('');
+    renderEngine();
     updateTokens();
+  } else if (data.type === 'engine') {
+    engine = data.engine;
+    renderEngine();
   } else if (data.type === 'result') {
-    pending = false;
-    if (queued && queued.join() !== data.tokens.join()) {
-      const next = queued;
+    // The worker can also send a result unasked, after recomputing on the CPU when the GPU stops working.
+    if (data.id === requestId) {
+      pending = false;
+      if (queued && (queued.tokens.join() !== data.tokens.join() || queued.backend !== inFlight?.backend)) {
+        const next = queued.tokens;
+        queued = null;
+        request(next);
+      }
       queued = null;
-      request(next);
     }
-    queued = null;
+    lastRun = { ms: data.ms, fresh: data.tokens.length - data.reused };
+    renderEngine();
     trace = data.trace;
     traceTokens = data.tokens;
+    traceBackend = data.backend;
     if (focus >= trace.n) focus = -1;
     result = applySampling(trace.logits, settings);
     generateButton.disabled = traceTokens.length >= MAX_TOKENS;
@@ -680,7 +774,7 @@ worker.onerror = () => setStatus('The model worker could not start. Reload the p
 function startLoading() {
   loadButton.hidden = true;
   document.querySelector<HTMLElement>('.load-progress').hidden = false;
-  send({ type: 'load', base: MODEL_BASE });
+  send({ type: 'load', base: MODEL_BASE, backend, softwareGpu: backendParameter === 'gpu' });
 }
 loadButton.addEventListener('click', startLoading);
 

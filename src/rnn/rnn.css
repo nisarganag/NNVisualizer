@@ -1,0 +1,127 @@
+/* Recurrent page: a character-level LSTM reading text. Builds on the shared tokens in styles.css. */
+
+/* The text and its controls, like the Transformer page's dock. */
+.prompt-dock { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 14px 18px; padding: 14px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel); box-shadow: var(--shadow-float); }
+.prompt-field { flex: 1 1 340px; min-width: 0; }
+.prompt-field label, .prompt-dock .control label { display: block; margin-bottom: 6px; color: var(--ink-3); font-size: 12.5px; font-weight: 500; }
+.prompt-field textarea { display: block; width: 100%; min-height: 44px; max-height: 9.2em; padding: 10px 14px; border: 1px solid transparent; border-radius: var(--radius-control); background: var(--well); color: var(--ink); font: inherit; font-size: 16px; font-weight: 500; line-height: 1.45; resize: none; field-sizing: content; transition: background-color .2s; }
+.prompt-field textarea:hover { background: var(--well-hover); }
+.prompt-field textarea:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.skipped-note { margin-top: 6px; padding: 0 14px; color: var(--ink-3); font-size: 12.5px; }
+.dock-controls { display: flex; flex: 0 1 auto; align-items: flex-end; flex-wrap: wrap; gap: 14px 18px; min-width: 0; padding-top: 1px; }
+.prompt-examples { flex: 0 1 auto; width: 190px; }
+.prompt-examples select { height: 44px; }
+.prompt-examples .select .icon { top: 15px; }
+.generate-button { height: 44px; min-width: 128px; padding: 0 18px 0 14px; }
+.generate-button .stop-icon, .generate-button.is-running .generate-icon { display: none; }
+.generate-button.is-running .stop-icon { display: inline-block; }
+.dock-range { margin-top: 0; flex: 0 1 auto; width: 170px; }
+.dock-range label { font-size: 12.5px; color: var(--ink-3); }
+
+.rnn-workbench { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; margin-top: 16px; align-items: start; }
+.rnn-workbench.is-empty .stage-body { opacity: .38; }
+/* The candidates stay in view beside the tall memory panel, when the window is tall enough to show them whole. */
+@media (min-height: 720px) and (min-width: 901px) { .next-panel { position: sticky; top: 80px; } }
+
+/* Surprise legend: the same amber steps as the Transformer's prompt strip. */
+.memory-panel { --tint-1: 15%; --tint-2: 29%; --tint-3: 45%; --tint-4: 62%; }
+:root[data-theme='dark'] .memory-panel { --tint-1: 18%; --tint-2: 30%; --tint-3: 41%; --tint-4: 52%; }
+.surprise-key { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 4px 24px; }
+.surprise-key .callout-note { flex: 1 1 320px; margin: 10px 0 6px; }
+.surprise-legend { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 8px; color: var(--ink-3); font-size: 12px; white-space: nowrap; cursor: help; }
+.surprise-scale { display: inline-flex; gap: 2px; }
+.surprise-scale i { width: 12px; height: 12px; border-radius: 3px; }
+.memory-panel [data-surprise='1'] { background: color-mix(in oklab, var(--signal-negative) var(--tint-1), var(--surface)); }
+.memory-panel [data-surprise='2'] { background: color-mix(in oklab, var(--signal-negative) var(--tint-2), var(--surface)); }
+.memory-panel [data-surprise='3'] { background: color-mix(in oklab, var(--signal-negative) var(--tint-3), var(--surface)); }
+.memory-panel [data-surprise='4'] { background: color-mix(in oklab, var(--signal-negative) var(--tint-4), var(--surface)); }
+
+/* The timeline: every row has one column per character, so it all scrolls together. */
+.timeline { position: relative; overflow-x: auto; overscroll-behavior-x: contain; container-type: inline-size; padding-bottom: 6px; scrollbar-width: thin; scrollbar-color: var(--well-hover) transparent; }
+/* The maps keep one height whatever the number of memory cells (set from the model as --cells). */
+.timeline-track { --step: 13px; --map-height: 256px; --cells: 256; position: relative; width: max(100%, calc(var(--steps, 0) * var(--step))); padding-bottom: 2px; }
+/* Labels stay at the left edge while the rows scroll, and cover the step marker where they cross it. */
+.track-label { position: sticky; left: 0; z-index: 2; display: block; width: fit-content; max-width: 100cqw; padding: 14px 8px 6px 0; background: var(--surface); color: var(--ink-2); font-size: 12.5px; line-height: 1.45; }
+.track-title { color: var(--ink); font-weight: 650; }
+.track-label .math { font-family: var(--font-math); font-size: 14px; }
+.track-note { color: var(--ink-3); }
+.track-label:first-child { padding-top: 4px; }
+.span-bars, .map-frame, .unit-chart, .gate-strip, .char-cells { width: calc(var(--steps, 0) * var(--step)); }
+.span-bars { display: block; height: 40px; }
+.char-cells { display: flex; height: 28px; margin: 2px 0 0; padding: 0; list-style: none; }
+.char-cell { position: relative; display: grid; flex: 0 0 var(--step); place-items: center; height: 100%; border-radius: 4px; color: var(--ink); font-size: 12.5px; font-weight: 550; line-height: 1; cursor: default; user-select: none; transition: background-color .3s, box-shadow .2s; }
+.char-cell.is-space::after { content: ''; width: 3px; height: 3px; border-radius: 50%; background: var(--ink-3); }
+.char-cell.is-break { color: var(--ink-3); }
+.char-cell[aria-selected='true'] { z-index: 1; box-shadow: inset 0 0 0 1.5px var(--ink); }
+/* Focus rings inside the timeline stay within their element, so the scroller never clips them. */
+.char-cell:focus-visible, .memory-map:focus-visible, .timeline .segmented button:focus-visible { z-index: 2; outline-offset: -2px; }
+.char-cell.is-new { animation: char-in .35s var(--ease-spring); }
+.map-frame { position: relative; height: var(--map-height); }
+.memory-map { display: block; width: 100%; height: 100%; border-radius: 3px; image-rendering: pixelated; cursor: crosshair; }
+.unit-marker { position: absolute; left: 0; right: 0; top: calc(var(--unit, 0) * var(--map-height) / var(--cells) - 2px); height: calc(var(--map-height) / var(--cells) + 4px); border-radius: 2px; box-shadow: inset 0 0 0 1.5px var(--ink), 0 0 0 1px var(--surface); pointer-events: none; transition: top .15s var(--ease-out); }
+.unit-chart { display: block; height: 88px; cursor: crosshair; }
+.cell-picks { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-left: 14px; vertical-align: middle; color: var(--ink-3); }
+.cell-picks .button { height: 26px; padding: 0 10px; font-size: 12px; }
+.cell-picks .button[aria-pressed='true'] { background: var(--surface); box-shadow: inset 0 0 0 1.5px var(--ink); }
+.gate-strips { display: grid; }
+.strip-label { padding: 6px 0 3px; font-size: 11.5px; }
+.gate-strip { display: block; height: 9px; border-radius: 2px; image-rendering: pixelated; }
+/* The focused step: one column through every row. Labels sit above it. */
+.step-marker { position: absolute; top: 0; bottom: 0; left: calc(var(--at, 0) * var(--step)); z-index: 1; width: var(--step); border-radius: 4px; box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ink) 55%, transparent); pointer-events: none; transition: left .12s var(--ease-out); }
+.rnn-workbench.is-empty .step-marker { display: none; }
+.map-readout { min-height: 1.5em; margin-top: 10px; color: var(--ink-2); font-size: 13px; font-variant-numeric: tabular-nums; }
+.memory-notes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 24px; }
+.memory-notes .callout-note { margin-top: 18px; }
+
+/* Next character: the candidates after the focused step, like the Transformer's list. */
+.next-context { margin: 2px 0 10px; color: var(--ink-2); font-size: 13px; }
+.next-context q { color: var(--ink); font-weight: 600; white-space: pre-wrap; }
+.candidate-list { display: grid; gap: 2px; margin: 0 -6px; padding: 0; list-style: none; }
+.candidate { display: grid; grid-template-columns: 28px minmax(0, 1.7fr) minmax(28px, 1fr) 46px; align-items: center; gap: 10px; padding: 5px 6px; border-radius: 8px; transition: opacity .3s, background-color .3s; }
+/* Generate never picks these. */
+.candidate.is-filtered { opacity: .42; }
+.candidate.is-filtered .candidate-bar i { background: var(--ink-3); }
+/* The word a candidate leads to: the part already written in grey, the network's guess in ink. */
+.candidate-word { overflow: hidden; color: var(--ink); font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.candidate-word .known, .candidate-word.is-mark { color: var(--ink-3); font-weight: 450; }
+.candidate.is-actual { background: var(--well); }
+.candidate-text { display: grid; place-items: center; height: 24px; border-radius: 6px; background: var(--well); color: var(--ink); font-size: 14px; font-weight: 620; white-space: pre; }
+.candidate.is-actual .candidate-text { background: var(--surface); box-shadow: inset 0 0 0 1.5px var(--ink); }
+.candidate-text.is-whitespace { color: var(--ink-3); }
+.candidate-bar { height: 10px; overflow: hidden; border-radius: 5px; background: var(--well-hover); }
+.candidate-bar i { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--ink); transition: width .45s var(--ease-out); }
+.candidate-value { color: var(--ink-2); font-size: 12.5px; text-align: right; }
+.next-actual { min-height: 1.5em; margin: 12px 0 4px; color: var(--ink-2); font-size: 13px; }
+
+/* How often it's right on the text shown. */
+.scorecard { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.scorecard[hidden] { display: none; }
+.scorecard-title { grid-column: 1 / -1; font-size: 13px; font-weight: 650; }
+.score { display: grid; gap: 2px; margin: 0; }
+.score-value { font-size: 24px; font-weight: 680; line-height: 1.1; letter-spacing: -.02em; }
+.score-label { color: var(--ink-3); font-size: 12px; line-height: 1.35; }
+.score-note { grid-column: 1 / -1; margin: 0; color: var(--ink-2); font-size: 12.5px; line-height: 1.45; }
+.score-note:empty { display: none; }
+
+.page-rnn .guide-card h3 { margin-top: 0; }
+
+@keyframes char-in { from { opacity: 0; transform: translateY(6px) scale(.8); } }
+
+@media (max-width: 1100px) {
+  .rnn-workbench { grid-template-columns: minmax(0, 1fr) 260px; }
+  .candidate { grid-template-columns: 26px minmax(0, 2.3fr) minmax(24px, 1fr) 42px; gap: 8px; }
+  .stage-body { padding-left: 16px; padding-right: 16px; }
+}
+@media (max-width: 900px) {
+  .rnn-workbench { grid-template-columns: minmax(0, 1fr); }
+  .candidate { grid-template-columns: 28px minmax(0, 1.7fr) minmax(28px, 1fr) 46px; gap: 10px; }
+  .memory-notes { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+  .prompt-dock { padding: 12px; }
+  .prompt-field, .dock-controls, .prompt-examples, .dock-range { flex: 1 1 100%; }
+  .generate-button { flex: 1 1 auto; }
+  .timeline-track { --step: 14px; --map-height: 192px; }
+  .long-label { display: none; }
+  .stage-meta { display: none; }
+}
