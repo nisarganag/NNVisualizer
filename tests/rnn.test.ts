@@ -213,7 +213,8 @@ describe('a run of the LSTM', () => {
     }
     // The default target is the most likely next character.
     expect(short.influence(159)).toEqual(short.influence(159, short.topCharacter(159)));
-  });
+    // About 170 runs of up to 160 steps: 3.5 s on an idle M4, slower beside the GPT-2 tests.
+  }, SLOW);
 
   it('can trace the memory span over the latest characters only', () => {
     const t = 150;
