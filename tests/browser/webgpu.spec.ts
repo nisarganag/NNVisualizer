@@ -162,6 +162,9 @@ test('heads switched off on the GPU give the CPU’s prediction', async ({ page 
 });
 
 test('the GPU tests every head in seconds, and each cell matches switching that head off', async ({ page }) => {
+  // Its point is speed on a real GPU. CI's software GPU would take minutes; switching heads off on the GPU is
+  // still checked there by the test above.
+  test.skip(Boolean(process.env.CI), 'CI runners have only a software GPU, too slow for the 144-head map.');
   test.setTimeout(900_000);
   await page.goto('/transformer/?backend=gpu');
   await page.getByRole('button', { name: 'Load the model' }).click();

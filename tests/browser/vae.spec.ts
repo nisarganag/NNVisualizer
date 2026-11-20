@@ -217,6 +217,11 @@ test.describe('autoencoder', () => {
       await open(page);
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
 
+      // Buttons answer a finger. This tap comes before the synthetic drag below: on CI's Linux Chrome,
+      // a tap right after a drag sent through the DevTools protocol can be swallowed.
+      await page.getByRole('button', { name: 'Try an example' }).tap();
+      await expect(page.locator('#drawing-readout')).toHaveText(/^It lands/);
+
       await page.locator('#map-frame').scrollIntoViewIfNeeded();
       const frame = (await page.locator('#map-frame').boundingBox())!;
       await page.touchscreen.tap(frame.x + frame.width * 0.5, frame.y + frame.height * 0.5);
@@ -236,8 +241,6 @@ test.describe('autoencoder', () => {
       expect(dragged[1]).toBeLessThan(tapped[1] - 0.5);
       expect(await page.evaluate(() => window.scrollY)).toBe(scroll);
 
-      await page.getByRole('button', { name: 'Try an example' }).tap();
-      await expect(page.locator('#drawing-readout')).toHaveText(/^It lands/);
       await page.getByRole('button', { name: 'Morph' }).tap();
       await expect(page.getByRole('button', { name: 'Morph' })).toBeVisible({ timeout: 6000 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);

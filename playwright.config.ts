@@ -19,6 +19,8 @@ export default defineConfig({
       // have no GPU, so the headless shell's software WebGPU (SwiftShader) stands in; the Linux flags are unverified.
       name: 'webgpu',
       testMatch: /webgpu\.spec\.ts$/,
+      // CI's software GPU gives the right answers, but every run takes seconds there.
+      expect: { timeout: process.env.CI ? 120_000 : 5_000 },
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 1440, height: 1000 },
