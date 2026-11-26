@@ -186,3 +186,13 @@
   .long-label { display: none; }
   .stage-meta { display: none; }
 }
+
+/* English or Hindi: which pair of networks the page loads. Links, so a Hindi address opens in Hindi. */
+.language-switch { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
+.language-switch .field-label { margin: 0; }
+.language-switch .segmented a { display: inline-flex; align-items: center; height: 30px; padding: 0 14px; border-radius: 999px; color: var(--ink-3); font-size: 13px; font-weight: 600; text-decoration: none; white-space: nowrap; transition: background-color .25s, color .25s, box-shadow .25s; }
+.language-switch .segmented a:hover { color: var(--ink); }
+.language-switch .segmented a[aria-current='page'] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / .1), 0 0 0 1px var(--line); }
+:root[data-theme='dark'] .language-switch .segmented a[aria-current='page'] { background: var(--well-hover); }
+/* Devanagari isn't in Mona Sans: name the fonts that have it before the system's fallback. */
+[lang='hi'] { font-family: 'Mona Sans Variable', 'Kohinoor Devanagari', 'Noto Sans Devanagari', 'Nirmala UI', 'Mangal', ui-sans-serif, system-ui, sans-serif; }

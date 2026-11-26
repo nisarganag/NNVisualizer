@@ -1,0 +1,650 @@
+{
+  "format": "char-lstm-v1",
+  "vocabulary": "\n !\"'(),-.:;?ँंःअआइईउऊऋएऐऑओऔकखगघङचछजझञटठडढणतथदधनपफबभमयरलवशषसह़ािीुूृॅेैॉोौ्।",
+  "inputSize": 76,
+  "hiddenSize": 256,
+  "gateOrder": [
+    "input",
+    "forget",
+    "cell",
+    "output"
+  ],
+  "parameters": 360524,
+  "tensors": [
+    {
+      "name": "inputWeights",
+      "shape": [
+        76,
+        1024
+      ],
+      "offset": 0
+    },
+    {
+      "name": "recurrentWeights",
+      "shape": [
+        1024,
+        256
+      ],
+      "offset": 77824
+    },
+    {
+      "name": "bias",
+      "shape": [
+        1024
+      ],
+      "offset": 339968
+    },
+    {
+      "name": "outputWeights",
+      "shape": [
+        76,
+        256
+      ],
+      "offset": 340992
+    },
+    {
+      "name": "outputBias",
+      "shape": [
+        76
+      ],
+      "offset": 360448
+    }
+  ],
+  "language": "hi",
+  "corpus": [
+    {
+      "title": "Tilismati Mundari (The Magic Ring)",
+      "author": "Shridhar Pathak",
+      "year": 1927,
+      "wikisource": "तिलिस्माती मुँदरी"
+    },
+    {
+      "title": "Rani Ketki ki Kahani",
+      "author": "Insha Allah Khan",
+      "year": 1803,
+      "wikisource": "रानी केतकी की कहानी"
+    },
+    {
+      "title": "Raja Bhoj ka Sapna",
+      "author": "Raja Shivprasad ‘Sitara-e-Hind’",
+      "year": 1856,
+      "wikisource": "राजा भोज का स्वप्ना"
+    },
+    {
+      "title": "Prem Sagar",
+      "author": "Lallu Lal",
+      "year": 1810,
+      "wikisource": "प्रेमसागर"
+    },
+    {
+      "title": "Saptasaroj (stories)",
+      "author": "Premchand",
+      "year": 1917,
+      "wikisource": "सप्तसरोज"
+    },
+    {
+      "title": "Panch Phool (stories)",
+      "author": "Premchand",
+      "year": 1929,
+      "wikisource": "पाँच फूल"
+    },
+    {
+      "title": "Prem Panchami (stories)",
+      "author": "Premchand",
+      "year": 1930,
+      "wikisource": "प्रेम पंचमी"
+    },
+    {
+      "title": "Nirmala",
+      "author": "Premchand",
+      "year": 1927,
+      "wikisource": "निर्मला"
+    },
+    {
+      "title": "Premashram",
+      "author": "Premchand",
+      "year": 1922,
+      "wikisource": "प्रेमाश्रम"
+    },
+    {
+      "title": "Kayakalp",
+      "author": "Premchand",
+      "year": 1926,
+      "wikisource": "कायाकल्प"
+    },
+    {
+      "title": "Akashdeep (stories)",
+      "author": "Jaishankar Prasad",
+      "year": 1929,
+      "wikisource": "आकाश-दीप"
+    },
+    {
+      "title": "Chandrakanta Santati, volume 2",
+      "author": "Devaki Nandan Khatri",
+      "year": 1896,
+      "wikisource": "चन्द्रकांता सन्तति २"
+    },
+    {
+      "title": "Chandrakanta Santati, volume 3",
+      "author": "Devaki Nandan Khatri",
+      "year": 1896,
+      "wikisource": "चन्द्रकांता सन्तति 3"
+    },
+    {
+      "title": "Chandrakanta Santati, volume 4",
+      "author": "Devaki Nandan Khatri",
+      "year": 1896,
+      "wikisource": "चन्द्रकांता सन्तति 4"
+    },
+    {
+      "title": "Chandrakanta Santati, volume 5",
+      "author": "Devaki Nandan Khatri",
+      "year": 1896,
+      "wikisource": "चन्द्रकान्ता सन्तति 5"
+    },
+    {
+      "title": "Pariksha Guru",
+      "author": "Lala Shrinivas Das",
+      "year": 1882,
+      "wikisource": "परीक्षा गुरु"
+    },
+    {
+      "title": "Sau Ajaan aur Ek Sujaan",
+      "author": "Balkrishna Bhatt",
+      "year": 1892,
+      "wikisource": "सौ अजान और एक सुजान"
+    },
+    {
+      "title": "Kapalkundala (Hindi translation)",
+      "author": "Bankim Chandra Chattopadhyay",
+      "year": 1900,
+      "wikisource": "कपालकुण्डला"
+    },
+    {
+      "title": "Durgeshnandini, part 1 (Hindi translation)",
+      "author": "Bankim Chandra Chattopadhyay, tr. Gadadhar Singh",
+      "year": 1882,
+      "wikisource": "दुर्गेशनन्दिनी प्रथम भाग"
+    }
+  ],
+  "validationBitsPerChar": 2.0852,
+  "validation": {
+    "characters": 272295,
+    "share": 0.05,
+    "perBook": [
+      {
+        "title": "Tilismati Mundari (The Magic Ring)",
+        "bitsPerChar": 2.2441,
+        "characters": 2557
+      },
+      {
+        "title": "Rani Ketki ki Kahani",
+        "bitsPerChar": 2.8184,
+        "characters": 1721
+      },
+      {
+        "title": "Raja Bhoj ka Sapna",
+        "bitsPerChar": 2.5364,
+        "characters": 617
+      },
+      {
+        "title": "Prem Sagar",
+        "bitsPerChar": 2.4759,
+        "characters": 20577
+      },
+      {
+        "title": "Saptasaroj (stories)",
+        "bitsPerChar": 2.4191,
+        "characters": 5701
+      },
+      {
+        "title": "Panch Phool (stories)",
+        "bitsPerChar": 2.2995,
+        "characters": 4829
+      },
+      {
+        "title": "Prem Panchami (stories)",
+        "bitsPerChar": 2.1709,
+        "characters": 4727
+      },
+      {
+        "title": "Nirmala",
+        "bitsPerChar": 2.1694,
+        "characters": 14163
+      },
+      {
+        "title": "Premashram",
+        "bitsPerChar": 2.2182,
+        "characters": 43971
+      },
+      {
+        "title": "Kayakalp",
+        "bitsPerChar": 2.0305,
+        "characters": 35970
+      },
+      {
+        "title": "Akashdeep (stories)",
+        "bitsPerChar": 2.4549,
+        "characters": 7151
+      },
+      {
+        "title": "Chandrakanta Santati, volume 2",
+        "bitsPerChar": 1.7382,
+        "characters": 23363
+      },
+      {
+        "title": "Chandrakanta Santati, volume 3",
+        "bitsPerChar": 1.7443,
+        "characters": 25234
+      },
+      {
+        "title": "Chandrakanta Santati, volume 4",
+        "bitsPerChar": 1.7808,
+        "characters": 25460
+      },
+      {
+        "title": "Chandrakanta Santati, volume 5",
+        "bitsPerChar": 1.7661,
+        "characters": 25397
+      },
+      {
+        "title": "Pariksha Guru",
+        "bitsPerChar": 2.4248,
+        "characters": 16188
+      },
+      {
+        "title": "Sau Ajaan aur Ek Sujaan",
+        "bitsPerChar": 2.5491,
+        "characters": 4797
+      },
+      {
+        "title": "Kapalkundala (Hindi translation)",
+        "bitsPerChar": 2.4925,
+        "characters": 5737
+      },
+      {
+        "title": "Durgeshnandini, part 1 (Hindi translation)",
+        "bitsPerChar": 2.4373,
+        "characters": 4135
+      }
+    ],
+    "note": "The last 5% of each book, read from a blank memory; never trained on."
+  },
+  "training": {
+    "characters": 5339281,
+    "epochs": 8,
+    "bestEpoch": 8,
+    "streams": 40,
+    "steps": 100,
+    "resetProbability": 0.1,
+    "learningRate": 0.002,
+    "finalLearningRate": 0.00005,
+    "clipNorm": 1,
+    "seed": 20261119,
+    "seconds": 1766,
+    "device": "Device(gpu, 0) (MLX 0.32.5)",
+    "script": "scripts/train-char-lstm-gpu.py",
+    "history": [
+      {
+        "epoch": 1,
+        "trainBits": 2.8994,
+        "validationBits": 2.4557
+      },
+      {
+        "epoch": 2,
+        "trainBits": 2.3323,
+        "validationBits": 2.2767
+      },
+      {
+        "epoch": 3,
+        "trainBits": 2.2074,
+        "validationBits": 2.2014
+      },
+      {
+        "epoch": 4,
+        "trainBits": 2.1387,
+        "validationBits": 2.1539
+      },
+      {
+        "epoch": 5,
+        "trainBits": 2.0929,
+        "validationBits": 2.119
+      },
+      {
+        "epoch": 6,
+        "trainBits": 2.0625,
+        "validationBits": 2.099
+      },
+      {
+        "epoch": 7,
+        "trainBits": 2.0435,
+        "validationBits": 2.0889
+      },
+      {
+        "epoch": 8,
+        "trainBits": 2.0341,
+        "validationBits": 2.0852
+      }
+    ]
+  },
+  "sources": [
+    {
+      "file": "tilismati-mundari.txt",
+      "sha256": "06e6b55b321cb6b3145bc5665415473b2309a3b758e287834cdf3d8eeca0baee"
+    },
+    {
+      "file": "rani-ketki.txt",
+      "sha256": "ef3b1e121275ac458a024abdb0f8a0c1c9f2bb3726a2536971841b46a4812b14"
+    },
+    {
+      "file": "raja-bhoj-ka-sapna.txt",
+      "sha256": "557ed988f10138ec57c6bdfe2736f0f5c6b4d27a3d67a0ba38f8fbb2ce421355"
+    },
+    {
+      "file": "prem-sagar.txt",
+      "sha256": "f962e713a30c0e567542f49ffc32f64f17f2bbe8bd4775a08fc27f9771a9955b"
+    },
+    {
+      "file": "saptasaroj.txt",
+      "sha256": "c73b961fc2a4a3c91b926f037845444d05057eb52c637f6a4c405893bd75a158"
+    },
+    {
+      "file": "panch-phool.txt",
+      "sha256": "8f0580fd5b2dcaf46ad08a2f5f8748d44d13f74ae93efcef3301bd4cc54469a5"
+    },
+    {
+      "file": "prem-panchami.txt",
+      "sha256": "85ecf0d5b6133683ce3dd41504e3c8296824de838086e1d8e82e66a920af6851"
+    },
+    {
+      "file": "nirmala.txt",
+      "sha256": "be2db545debd279300e5c2f01eebf4745d686b300d3d761a1a33f574e06ab6a4"
+    },
+    {
+      "file": "premashram.txt",
+      "sha256": "8b68c7bf0c4f5670858cde0353aad7fbc28473cdcaa4a329ccbd7a4c9a102e3f"
+    },
+    {
+      "file": "kayakalp.txt",
+      "sha256": "0521c097ec470d39525f97b98e4bf06e67a782c0280ffc0b57ec13a7b2d30c00"
+    },
+    {
+      "file": "akashdeep.txt",
+      "sha256": "666e78b8079540deebb5bdc8ead90282c93c60146ca91d99aed6ba473f098c20"
+    },
+    {
+      "file": "chandrakanta-santati-2.txt",
+      "sha256": "662c778a96e5a50cfe3b2d6289d65692fa0ea41fb31fde2ad9f57bc8ef011f91"
+    },
+    {
+      "file": "chandrakanta-santati-3.txt",
+      "sha256": "6030fcd1efe6de1000294ed31e812874816944667b9c1487575451cc9c534bf8"
+    },
+    {
+      "file": "chandrakanta-santati-4.txt",
+      "sha256": "20471074af4388ad5c43bc4674a20e26c5205ec1bc80ee7c81fb8ab6bd949846"
+    },
+    {
+      "file": "chandrakanta-santati-5.txt",
+      "sha256": "936e87e1dc24e052607a53c0e9479da178f124e05b3171708cd30e9e38ce2d38"
+    },
+    {
+      "file": "pariksha-guru.txt",
+      "sha256": "195154a76467321c519ad172caf9f04c30704ddbbd474081a084c1551ee46d49"
+    },
+    {
+      "file": "sau-ajaan-ek-sujaan.txt",
+      "sha256": "a0dc15d275325b2deede8e99bebec37cb366e5e740de8999f2e2128ac8b17ea6"
+    },
+    {
+      "file": "kapalkundala.txt",
+      "sha256": "72506fa1400ed394f471a704d2f57c98eccc383c9a723846a2d4eadd776bd53d"
+    },
+    {
+      "file": "durgeshnandini.txt",
+      "sha256": "015a50b2f17f19646cfae0b5eed6d7bd122e96b778197fafcece2e736efa899d"
+    }
+  ],
+  "notableCells": [
+    {
+      "feature": "quote",
+      "description": "inside a quotation",
+      "cell": 180,
+      "correlation": 0.164
+    },
+    {
+      "feature": "parenthesis",
+      "description": "inside parentheses",
+      "cell": 205,
+      "correlation": -0.303
+    },
+    {
+      "feature": "word",
+      "description": "letters into the current word",
+      "cell": 140,
+      "correlation": 0.681
+    },
+    {
+      "feature": "paragraph",
+      "description": "characters into the paragraph",
+      "cell": 119,
+      "correlation": -0.26
+    }
+  ],
+  "reference": {
+    "note": "Measured on the held-out text (the last 5% of each book, read from a blank memory) with the shipped weights. Accuracy covers every held-out character; the memory span covers 2014 evenly spaced guesses with at least 200 characters before them, each traced 200 characters back from its likeliest next character, as the page's span view does.",
+    "accuracy": {
+      "guesses": 272276,
+      "firstGuess": 0.5866,
+      "topThree": 0.7741
+    },
+    "memorySpan": {
+      "guesses": 2014,
+      "reach": 200,
+      "halfReach": 4,
+      "ninetyReach": 29,
+      "byDistance": [
+        0.1822,
+        0.1325,
+        0.1059,
+        0.08984,
+        0.06937,
+        0.05491,
+        0.04303,
+        0.03441,
+        0.02758,
+        0.02159,
+        0.01789,
+        0.01433,
+        0.01172,
+        0.009848,
+        0.00823,
+        0.006964,
+        0.006127,
+        0.005576,
+        0.004852,
+        0.004409,
+        0.004039,
+        0.003681,
+        0.003302,
+        0.00308,
+        0.002903,
+        0.002703,
+        0.002684,
+        0.002578,
+        0.002428,
+        0.002371,
+        0.002165,
+        0.002218,
+        0.002137,
+        0.002008,
+        0.001949,
+        0.00183,
+        0.001867,
+        0.001745,
+        0.001733,
+        0.001656,
+        0.001592,
+        0.001626,
+        0.001556,
+        0.001604,
+        0.001454,
+        0.001443,
+        0.001482,
+        0.001346,
+        0.001386,
+        0.001311,
+        0.001283,
+        0.001268,
+        0.001222,
+        0.001163,
+        0.001201,
+        0.001191,
+        0.001161,
+        0.001124,
+        0.001168,
+        0.001106,
+        0.00108,
+        0.001074,
+        0.001063,
+        0.001057,
+        0.001046,
+        0.000983,
+        0.0009868,
+        0.000985,
+        0.0009272,
+        0.0009257,
+        0.001032,
+        0.0009291,
+        0.0009256,
+        0.0009585,
+        0.0009016,
+        0.0009046,
+        0.0008834,
+        0.0008847,
+        0.000843,
+        0.0008322,
+        0.0008564,
+        0.0008579,
+        0.000813,
+        0.0008184,
+        0.0008291,
+        0.0008011,
+        0.0008095,
+        0.0007338,
+        0.0007609,
+        0.0007834,
+        0.0007637,
+        0.0007427,
+        0.0007419,
+        0.0007317,
+        0.0007086,
+        0.0006478,
+        0.0006729,
+        0.0006399,
+        0.0006319,
+        0.0006187,
+        0.0006398,
+        0.0005923,
+        0.0006182,
+        0.0006153,
+        0.0005877,
+        0.0005917,
+        0.0005651,
+        0.000568,
+        0.0005687,
+        0.000537,
+        0.0005814,
+        0.0005719,
+        0.0005477,
+        0.0005531,
+        0.0005479,
+        0.0005367,
+        0.0005487,
+        0.0005471,
+        0.0005065,
+        0.0005304,
+        0.0004905,
+        0.0004986,
+        0.0004805,
+        0.0004704,
+        0.0004742,
+        0.0004487,
+        0.0004508,
+        0.0004699,
+        0.000449,
+        0.0004342,
+        0.0004582,
+        0.0004527,
+        0.0004142,
+        0.0004189,
+        0.0004102,
+        0.0004152,
+        0.000407,
+        0.0004116,
+        0.0004277,
+        0.0004188,
+        0.0004142,
+        0.000409,
+        0.0004124,
+        0.00042,
+        0.0004133,
+        0.0003723,
+        0.0003786,
+        0.0003786,
+        0.0003844,
+        0.0003747,
+        0.0003645,
+        0.0003654,
+        0.0003725,
+        0.0003566,
+        0.0003484,
+        0.000334,
+        0.0003404,
+        0.0003383,
+        0.0003341,
+        0.0003105,
+        0.0003157,
+        0.0003369,
+        0.0003187,
+        0.0003189,
+        0.000309,
+        0.0003055,
+        0.0003006,
+        0.0002876,
+        0.0003008,
+        0.0003001,
+        0.0003032,
+        0.0002936,
+        0.0003074,
+        0.0003098,
+        0.0002962,
+        0.0002793,
+        0.0002898,
+        0.0002919,
+        0.0002794,
+        0.0002801,
+        0.0002707,
+        0.0002749,
+        0.0002657,
+        0.0002623,
+        0.0002589,
+        0.0002598,
+        0.0002522,
+        0.0002693,
+        0.0002649,
+        0.0002518,
+        0.0002547,
+        0.0002498,
+        0.0002564,
+        0.0002508,
+        0.0002445,
+        0.0002443,
+        0.0002443,
+        0.0002293,
+        0.0002323,
+        0.0002318
+      ]
+    }
+  }
+}

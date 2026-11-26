@@ -51,6 +51,8 @@ limitations under the License.
       <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol>
       <symbol id="i-external" viewBox="0 0 24 24"><path d="M8 16 18 6M8 6h10v10"/></symbol>
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V4m-4.5 4.5L12 4l4.5 4.5M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol>
       <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M3 6h3c5 0 7 12 12 12h3m-4-4 4 4-4 4M3 18h3c2 0 3-2 5-5m3-5c1-1 2-2 4-2h3m-4-4 4 4-4 4"/></symbol>
       <symbol id="i-network" viewBox="0 0 24 24"><path d="m6 7 6 5 6-5M6 17l6-5 6 5"/><circle cx="4" cy="5" r="2"/><circle cx="4" cy="19" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="20" cy="19" r="2"/></symbol>
       <symbol id="i-digits" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M9.2 9.6c.5-1.9 5.4-2.1 5.4.6 0 2.3-4.2 3.6-5.6 5.9h5.9"/></symbol>
@@ -147,13 +149,28 @@ limitations under the License.
             <div class="dataset dataset-custom" title="Your own points"><canvas class="data-thumbnail" data-dataset="custom"></canvas><span>Draw your own</span></div>
             <div class="dataset" title="Plane"><canvas class="data-thumbnail" data-regDataset="reg-plane"></canvas><span>Plane</span></div>
             <div class="dataset" title="Multi gaussian"><canvas class="data-thumbnail" data-regDataset="reg-gauss"></canvas><span>Multi-Gauss</span></div>
+            <div class="dataset dataset-custom" title="Your own points"><canvas class="data-thumbnail" data-regDataset="reg-custom"></canvas><span>Draw your own</span></div>
+          </div>
+          <div id="csv-controls" class="csv-controls">
+            <button id="csv-upload" class="button secondary small" type="button"><svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg>Upload CSV</button>
+            <button id="csv-sample" class="button secondary small" type="button"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Sample CSV</button>
+            <input id="csv-file" type="file" accept=".csv,text/csv,text/plain" hidden>
+            <p id="csv-hint" class="csv-hint">Columns x1, x2, label: 1 is violet, −1 amber.</p>
+            <p id="csv-message" class="csv-message" role="status" aria-live="polite" hidden></p>
           </div></div>
           <div id="paint-controls" class="paint-controls" hidden>
-            <p class="field-label">Click the decision boundary plot to place points</p>
-            <div class="segmented" role="radiogroup" aria-label="What a click places">
+            <p id="paint-hint" class="field-label">Click the decision boundary plot to place points</p>
+            <div class="segmented paint-classes" role="radiogroup" aria-label="What a click places">
               <button type="button" role="radio" aria-checked="true" data-paint="1"><i class="paint-swatch positive" aria-hidden="true"></i>Violet</button>
               <button type="button" role="radio" aria-checked="false" data-paint="-1"><i class="paint-swatch negative" aria-hidden="true"></i>Amber</button>
               <button type="button" role="radio" aria-checked="false" data-paint="0">Erase</button>
+            </div>
+            <div class="paint-values">
+              <div class="range-control"><label for="paint-value"><span>Value</span><span class="range-value"><i id="paint-value-swatch" class="paint-swatch" aria-hidden="true"></i><span id="paint-value-text">0.5</span></span></label><input type="range" id="paint-value" min="-1" max="1" step="0.1" value="0.5"></div>
+              <div class="segmented" role="radiogroup" aria-label="What a click does">
+                <button type="button" role="radio" aria-checked="true" data-value-paint="place">Place</button>
+                <button type="button" role="radio" aria-checked="false" data-value-paint="erase">Erase</button>
+              </div>
             </div>
             <button id="clear-points" class="button secondary small" type="button">Clear points</button>
           </div>

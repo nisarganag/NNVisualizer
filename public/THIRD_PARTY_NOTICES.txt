@@ -234,6 +234,38 @@ period slurs were left out of training. The page's example sentences quote
 short passages from these public-domain works.
 
 
+Hindi Wikisource books (training data only)
+-------------------------------------------
+The Recurrent page's Hindi networks were trained on nineteen public-domain
+Hindi books from Hindi Wikisource (https://hi.wikisource.org/), each first
+published before 1931 by an author or translator who died long ago, so they
+are in the public domain in India and in the United States:
+  तिलिस्माती मुँदरी (Tilismati Mundari), by Shridhar Pathak, 1927
+  रानी केतकी की कहानी (Rani Ketki ki Kahani), by Insha Allah Khan, about 1803
+  राजा भोज का स्वप्ना (Raja Bhoj ka Sapna), by Raja Shivprasad 'Sitara-e-Hind'
+  प्रेमसागर (Prem Sagar), by Lallu Lal, 1810
+  सप्तसरोज (Saptasaroj), पाँच फूल (Panch Phool) and प्रेम पंचमी (Prem Panchami),
+    stories by Premchand, 1917, 1929 and 1930
+  निर्मला (Nirmala), प्रेमाश्रम (Premashram) and कायाकल्प (Kayakalp), novels by
+    Premchand, 1922 to 1927
+  आकाश-दीप (Akashdeep), stories by Jaishankar Prasad, 1929
+  चन्द्रकांता सन्तति (Chandrakanta Santati), volumes 2 to 5, by Devaki Nandan
+    Khatri, 1896
+  परीक्षा गुरु (Pariksha Guru), by Lala Shrinivas Das, 1882
+  सौ अजान और एक सुजान (Sau Ajaan aur Ek Sujaan), by Balkrishna Bhatt, 1892
+  कपालकुण्डला (Kapalkundala), by Bankim Chandra Chattopadhyay, in a Hindi
+    translation of 1900
+  दुर्गेशनन्दिनी (Durgeshnandini), part 1, by Bankim Chandra Chattopadhyay, in
+    Gadadhar Singh's Hindi translation
+No Wikisource text is distributed with Neural Network Visualizer.
+scripts/fetch-hindi-books.mjs downloads the proofread pages, and the training
+script uses the text only to train public/models/char-lstm-hi-v1.bin and the
+gateless network in public/models/char-rnn-hi-v1.bin. Paragraphs containing
+caste, communal or gendered slurs were left out of training. The page's Hindi
+example sentences quote short passages from तिलिस्माती मुँदरी and सप्तसरोज,
+or were written for the page.
+
+
 Transformer Explainer (inspiration only)
 ----------------------------------------
 The Transformer page's approach is inspired by Transformer Explainer by Aeree

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as nn from '../src/nn';
-import { State, activations, decodePoints, encodePoints, MAX_DRAWN_POINTS, optimizers } from '../src/state';
+import { State, activations, decodePoints, decodeValuedPoints, encodePoints, encodeValuedPoints, MAX_DRAWN_POINTS, optimizers, regDatasets } from '../src/state';
 import { TrainingEngine } from '../src/simulation';
 import { captureModel } from '../src/model-state';
 
@@ -105,6 +105,17 @@ describe('settings in the URL', () => {
     expect(decodePoints(btoa(String.fromCharCode(127, 0, 1)))).toEqual([]);
     const state = State.deserializeState(`#dataset=custom&points=${encodePoints(points)}`);
     expect(decodePoints(state.points)).toHaveLength(3);
+  });
+
+  it('stores hand-placed regression points with their values, to 0.01 within ±1', () => {
+    const points = [{ x: 1.23, y: -4.56, label: .257 }, { x: -6, y: 6, label: -1 }, { x: 0, y: 0, label: 3 }, { x: 2, y: 2, label: NaN }];
+    expect(decodeValuedPoints(encodeValuedPoints(points))).toEqual([
+      { x: 1.25, y: -4.55, label: .26 }, { x: -6, y: 6, label: -1 }, { x: 0, y: 0, label: 1 }, { x: 2, y: 2, label: 0 },
+    ]);
+    expect(decodeValuedPoints('not base64!')).toEqual([]);
+    const state = State.deserializeState(`#problem=regression&regDataset=reg-custom&regPoints=${encodeValuedPoints(points)}`);
+    expect(state.regDataset).toBe(regDatasets['reg-custom']);
+    expect(decodeValuedPoints(state.regPoints).map(point => point.label)).toEqual([.26, -1, 1, 0]);
   });
 });
 

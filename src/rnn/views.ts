@@ -25,8 +25,11 @@ export interface ChartColors {
   well: string;
 }
 
-export const characterName = (c: string) => (c === ' ' ? 'space' : c === '\n' ? 'new paragraph' : c);
-export const glyph = (c: string) => (c === ' ' ? '␣' : c === '\n' ? '↵' : c);
+/** A vowel sign, virama or other mark that Devanagari writes onto a letter. */
+const MARK = /^\p{M}$/u;
+export const characterName = (c: string) => (c === ' ' ? 'space' : c === '\n' ? 'new paragraph' : c === '।' ? 'danda' : glyph(c));
+/** How a character is shown on its own: a mark sits on a dotted circle, as dictionaries print it. */
+export const glyph = (c: string) => (c === ' ' ? '␣' : c === '\n' ? '↵' : MARK.test(c) ? `◌${c}` : c);
 export const percent = (p: number) => (p < .001 ? '<0.1%' : `${(p * 100).toFixed(1)}%`);
 /** A correlation to two decimals, rounding halves away from zero (−0.735 is −0.74), with a true minus sign. */
 export const correlationText = (r: number) => `${r < 0 ? '−' : ''}${(Math.round(Math.abs(r) * 100) / 100).toFixed(2)}`;

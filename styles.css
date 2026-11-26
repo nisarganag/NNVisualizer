@@ -263,8 +263,19 @@ input[type='range']:disabled { opacity: .35; cursor: not-allowed; }
 .dataset .selected { opacity: 1; filter: none; }
 .dataset-custom { grid-column: 1 / -1; flex-direction: row; justify-content: center; gap: 12px; padding: 8px 10px; }
 .dataset-custom canvas { width: 34px; height: 34px; }
+/* Your own data from a CSV file: upload, a sample to copy, and what happened. */
+/* Side by side when there is room for both labels, as on a phone; stacked in the narrow desktop panel. */
+.csv-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; margin-top: 10px; }
+.csv-controls .button { justify-content: center; min-width: 0; padding: 0 8px; }
+.csv-hint { grid-column: 1 / -1; margin: 0; color: var(--ink-3); font-size: 12px; line-height: 1.4; }
+.csv-message { grid-column: 1 / -1; margin: 0; padding: 8px 10px; border-radius: var(--radius-inner); background: var(--well); color: var(--ink-2); font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.csv-message[data-kind='error'] { background: var(--critical-bg); color: var(--critical); }
 .paint-controls { display: grid; justify-items: start; gap: 10px; min-width: 0; margin-top: 12px; padding: 12px; border-radius: var(--radius-inner); background: var(--well); }
 .paint-controls .field-label { color: var(--ink-2); }
+/* Regression points carry a value: a slider with its color, then place or erase. */
+.paint-values { display: grid; gap: 10px; width: 100%; }
+.paint-values .range-control { margin: 0; }
+.paint-values .range-value { display: inline-flex; align-items: center; }
 .paint-controls .segmented { display: flex; width: 100%; background: var(--surface); }
 .paint-controls .segmented button { flex: 1; justify-content: center; min-width: 0; padding: 0 6px; }
 :root[data-theme='dark'] .paint-controls .segmented { background: var(--paper); }

@@ -491,8 +491,9 @@ export interface RnnStepTrace {
   probabilities: Float32Array;
 }
 
-const LETTER = /[A-Za-z]/;
-const IN_WORD = /[A-Za-z']/;
+/** Letters, with the vowel signs and other marks Devanagari writes with them; English adds the apostrophe inside words. */
+const LETTER = /[\p{L}\p{M}]/u;
+const IN_WORD = /[\p{L}\p{M}']/u;
 
 /**
  * A run of either network over a sequence, with every step's activations kept in flat

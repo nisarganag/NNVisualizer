@@ -75,7 +75,8 @@
     <section class="workspace-intro" aria-labelledby="rnn-heading">
       <div class="intro-copy">
         <h1 id="rnn-heading">Watch a network remember.</h1>
-        <p class="intro-description">A small recurrent network reads your text one character at a time, carrying a memory of 256 numbers from each character to the next. From nineteen children’s classics it learned how English is spelled and punctuated, but not what it means, so its own sentences sound like English without making sense.</p>
+        <p id="rnn-intro" class="intro-description">A small recurrent network reads your text one character at a time, carrying a memory of 256 numbers from each character to the next. From nineteen children’s classics it learned how English is spelled and punctuated, but not what it means, so its own sentences sound like English without making sense.</p>
+        <nav class="language-switch" aria-label="Language the networks learned"><span class="field-label">Language</span><span class="segmented"><a href="./" data-language="en" aria-current="page">English</a><a href="?lang=hi" data-language="hi" lang="hi">हिन्दी</a></span></nav>
       </div>
     </section>
 
@@ -227,7 +228,7 @@
         </div>
         <div class="memory-notes gates-notes">
           <p class="callout-note">Without gates, every step squashes the whole memory through the same <strong>tanh</strong>, so a character’s pull shrinks by about the same factor with every character that follows. Up close that hardly shows; from about fifty characters back, it does.</p>
-          <p class="callout-note">The LSTM’s <strong>forget gate</strong> can hold a cell’s memory almost unchanged for dozens of characters. That is how it keeps track of an open quote.</p>
+          <p class="callout-note">The LSTM’s <strong>forget gate</strong> can hold a cell’s memory almost unchanged for dozens of characters.<span id="quote-callout"> That is how it keeps track of an open quote.</span></p>
         </div>
       </div>
     </section>
@@ -240,7 +241,7 @@
         <section class="guide-card"><h3>Why memory fades</h3><p>Every step multiplies the old memory by a forget gate, so a character’s influence shrinks as more text arrives unless the gates hold it open. Without gates nothing can hold it open: every step shrinks the pull of older text by about the same factor, so it fades away steadily. Even the LSTM remembers only the last dozen or so characters well, enough to finish a word but not to keep a thought going, which is why its own sentences drift. The <a href="/transformer/">Transformer</a> avoids this: attention looks back at every earlier token directly instead of carrying a memory forward.</p></section>
       </div>
       <details class="credits"><summary>Model and credits<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
-        <p>The network is a long short-term memory (LSTM) with one layer of 256 cells and about 346,000 parameters, trained for this site on nineteen public-domain children’s books from <a href="https://www.gutenberg.org/">Project Gutenberg</a>, among them <cite>Alice’s Adventures in Wonderland</cite>, <cite>The Wonderful Wizard of Oz</cite>, <cite>Peter Pan</cite>, <cite>The Jungle Book</cite>, <cite>Treasure Island</cite>, <cite>The Secret Garden</cite>, <cite>The Wind in the Willows</cite>, <cite>Anne of Green Gables</cite>, and the fairy tales of the Brothers Grimm and Hans Christian Andersen. Paragraphs with the period slurs some of these books use were left out. The last 5% of each book was held out from training; on that text it averages <span id="validation-bits" class="readout">about 2</span> bits per character. The network it is compared with has no gates: one layer of 512 units, h = tanh(W<sub>x</sub>x + Uh + b), with about 329,000 parameters, trained the same way on the same books. On the same held-out text it averages <span id="gates-validation-bits" class="readout">about 2</span> bits per character. Both run entirely in your browser; nothing you type leaves your device.</p>
+        <p id="model-credits">The network is a long short-term memory (LSTM) with one layer of 256 cells and about 346,000 parameters, trained for this site on nineteen public-domain children’s books from <a href="https://www.gutenberg.org/">Project Gutenberg</a>, among them <cite>Alice’s Adventures in Wonderland</cite>, <cite>The Wonderful Wizard of Oz</cite>, <cite>Peter Pan</cite>, <cite>The Jungle Book</cite>, <cite>Treasure Island</cite>, <cite>The Secret Garden</cite>, <cite>The Wind in the Willows</cite>, <cite>Anne of Green Gables</cite>, and the fairy tales of the Brothers Grimm and Hans Christian Andersen. Paragraphs with the period slurs some of these books use were left out. The last 5% of each book was held out from training; on that text it averages <span id="validation-bits" class="readout">about 2</span> bits per character. The network it is compared with has no gates: one layer of 512 units, h = tanh(W<sub>x</sub>x + Uh + b), with about 329,000 parameters, trained the same way on the same books. On the same held-out text it averages <span id="gates-validation-bits" class="readout">about 2</span> bits per character. Both run entirely in your browser; nothing you type leaves your device.</p>
       </details>
     </article>
   </main>

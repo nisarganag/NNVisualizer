@@ -70,20 +70,27 @@ export let datasets: {[key: string]: dataset.DataGenerator} = {
 export interface DrawnPoint { x: number; y: number; label: number; }
 export const MAX_DRAWN_POINTS = 400;
 
-/** Three bytes per point: x and y in steps of 0.05 within ±6, then the class. URL-safe base64. */
-export function encodePoints(points: DrawnPoint[]): string {
+/** A signed byte, as stored in a point's three bytes. */
+const toByte = (n: number) => (n + 256) % 256;
+const fromByte = (code: number) => (code > 127 ? code - 256 : code);
+
+/**
+ * Three bytes per point, as URL-safe base64: x and y in steps of 0.05 within ±6, then
+ * the class (1 violet, 0 amber), or for regression the value in steps of 0.01 within ±1.
+ */
+function encode(points: DrawnPoint[], third: (point: DrawnPoint) => number): string {
   const bytes = new Uint8Array(Math.min(points.length, MAX_DRAWN_POINTS) * 3);
   points.slice(0, MAX_DRAWN_POINTS).forEach((point, i) => {
-    const step = (v: number) => (Math.max(-120, Math.min(120, Math.round(v * 20))) + 256) % 256;
-    bytes.set([step(point.x), step(point.y), point.label > 0 ? 1 : 0], i * 3);
+    const step = (v: number) => toByte(Math.max(-120, Math.min(120, Math.round(v * 20))));
+    bytes.set([step(point.x), step(point.y), third(point)], i * 3);
   });
   let binary = '';
   bytes.forEach(byte => { binary += String.fromCharCode(byte); });
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-/** The inverse of encodePoints; anything malformed is dropped rather than trusted. */
-export function decodePoints(text: string | null): DrawnPoint[] {
+/** The inverse of encode; anything malformed is dropped rather than trusted. */
+function decode(text: string | null, label: (code: number) => number): DrawnPoint[] {
   if (!text || !/^[A-Za-z0-9_-]*$/.test(text)) return [];
   let binary: string;
   try {
@@ -93,19 +100,28 @@ export function decodePoints(text: string | null): DrawnPoint[] {
   }
   const points: DrawnPoint[] = [];
   for (let i = 0; i + 2 < binary.length && points.length < MAX_DRAWN_POINTS; i += 3) {
-    const signed = (code: number) => (code > 127 ? code - 256 : code);
-    const x = signed(binary.charCodeAt(i)) / 20;
-    const y = signed(binary.charCodeAt(i + 1)) / 20;
+    const x = fromByte(binary.charCodeAt(i)) / 20;
+    const y = fromByte(binary.charCodeAt(i + 1)) / 20;
     if (Math.abs(x) > 6 || Math.abs(y) > 6) continue;
-    points.push({ x, y, label: binary.charCodeAt(i + 2) === 1 ? 1 : -1 });
+    points.push({ x, y, label: label(binary.charCodeAt(i + 2)) });
   }
   return points;
 }
 
+/** Hand-placed classification points: violet (1) or amber (-1). */
+export const encodePoints = (points: DrawnPoint[]) => encode(points, point => (point.label > 0 ? 1 : 0));
+export const decodePoints = (text: string | null) => decode(text, code => (code === 1 ? 1 : -1));
+/** Hand-placed regression points, each with a value from -1 to 1. */
+export const encodeValuedPoints = (points: DrawnPoint[]) =>
+  encode(points, point => toByte(Math.max(-100, Math.min(100, Math.round((Number.isFinite(point.label) ? point.label : 0) * 100)))));
+export const decodeValuedPoints = (text: string | null) => decode(text, code => Math.max(-1, Math.min(1, fromByte(code) / 100)));
+
 /** A map between dataset names and functions that generate regression data. */
 export let regDatasets: {[key: string]: dataset.DataGenerator} = {
   "reg-plane": dataset.regressPlane,
-  "reg-gauss": dataset.regressGaussian
+  "reg-gauss": dataset.regressGaussian,
+  // Points placed by hand live in the `regPoints` setting, not in a generator.
+  "reg-custom": () => [],
 };
 
 export function getKeyFromValue(obj: any, value: any): string {
@@ -193,7 +209,8 @@ export class State {
     {name: "hideText", type: Type.BOOLEAN},
     {name: "optimizer", type: Type.OBJECT, keyMap: optimizers},
     {name: "showBackprop", type: Type.BOOLEAN},
-    {name: "points", type: Type.STRING}
+    {name: "points", type: Type.STRING},
+    {name: "regPoints", type: Type.STRING}
   ];
 
   [key: string]: any;
@@ -231,6 +248,8 @@ export class State {
   showBackprop = false;
   /** Hand-placed points (see encodePoints); only used by the custom dataset. */
   points: string = null;
+  /** Hand-placed regression points with their values (see encodeValuedPoints); only used by reg-custom. */
+  regPoints: string = null;
 
   /**
    * Deserializes the state from the url hash.
@@ -314,6 +333,7 @@ export class State {
     }
     state.seed = state.seed.slice(0, 128);
     if (state.points != null) state.points = encodePoints(decodePoints(state.points));
+    if (state.regPoints != null) state.regPoints = encodeValuedPoints(decodeValuedPoints(state.regPoints));
     state.numHiddenLayers = state.networkShape.length;
     seedrandom(state.seed, { global: true });
     return state;

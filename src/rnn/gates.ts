@@ -20,7 +20,8 @@ import {
   surpriseLevel, type ChartColors,
 } from './views';
 
-const MODEL_BASE = '/models/char-rnn-v1';
+/** The quotation views appear only when the LSTM's quotation cell follows quotations at least this closely. */
+const QUOTE_CORRELATION = .5;
 /** The gateless network starts loading when the section is less than a screen below the view. */
 const LOAD_MARGIN = '0px 0px 100% 0px';
 /** This text's fade curves average the guesses after every FADE_EVERY-th step, from the (FADE_FIRST + 1)th character on. */
@@ -55,6 +56,8 @@ export interface GatesHost {
   colors(): ChartColors;
   /** How Generate samples: the page's temperature, from the five likeliest characters. */
   readonly settings: SamplingSettings;
+  /** The gateless network's files for the page's language, without .json and .bin. */
+  readonly modelBase: string;
 }
 
 export interface Gates {
@@ -148,6 +151,12 @@ export function createGates(host: GatesHost): Gates {
   const prefixKey = (t: number) => Array.from(host.run.indices.subarray(0, t + 1)).join(',');
   const references = (): Record<Network, HeldOutReference | undefined> => ({ lstm: host.meta.reference, rnn: model?.meta.reference });
   const quoteCell = (meta: CharLstmMeta | CharRnnMeta): NotableCell | undefined => meta?.notableCells?.find(entry => entry.feature === 'quote');
+  /**
+   * The quotation views need an LSTM cell that clearly follows quotations, as the English
+   * one does (r = -0.74). The Hindi books mark dialogue less consistently, and no Hindi
+   * cell does (best r = 0.16), so there the views are left out rather than overstated.
+   */
+  const quotesShown = () => Math.abs(quoteCell(host.meta)?.correlation ?? 0) >= QUOTE_CORRELATION && !!quoteCell(model?.meta);
 
   /* ---------- Loading ---------- */
 
@@ -156,11 +165,11 @@ export function createGates(host: GatesHost): Gates {
     loading = true;
     try {
       const [meta, weights] = await Promise.all([
-        fetch(`${MODEL_BASE}.json`).then(response => {
+        fetch(`${host.modelBase}.json`).then(response => {
           if (!response.ok) throw new Error(`${response.status}`);
           return response.json() as Promise<CharRnnMeta>;
         }),
-        fetch(`${MODEL_BASE}.bin`).then(response => {
+        fetch(`${host.modelBase}.bin`).then(response => {
           if (!response.ok) throw new Error(`${response.status}`);
           return response.arrayBuffer();
         }),
@@ -197,8 +206,13 @@ export function createGates(host: GatesHost): Gates {
     }
     const cells = { lstm: quoteCell(host.meta), rnn: quoteCell(model.meta) };
     const evidence = $('quote-evidence');
-    evidence.hidden = !cells.lstm || !cells.rnn;
-    if (evidence.hidden) return;
+    const shown = quotesShown();
+    evidence.hidden = !shown;
+    quoteChart.hidden = !shown;
+    $('quote-note').parentElement.hidden = !shown;
+    const callout = document.getElementById('quote-callout');
+    if (callout) callout.hidden = !shown;
+    if (!shown) return;
     $('quote-lstm-cell').textContent = `cell ${cells.lstm.cell + 1}`;
     $('quote-rnn-cell').textContent = `unit ${cells.rnn.cell + 1}`;
     for (const network of ['lstm', 'rnn'] as const) {
@@ -373,7 +387,7 @@ export function createGates(host: GatesHost): Gates {
     const n = run.length;
     const cells = { lstm: quoteCell(host.meta), rnn: quoteCell(model.meta) };
     const note = $('quote-note');
-    if (!n || !cells.lstm || !cells.rnn) { note.textContent = ''; return; }
+    if (!n || !quotesShown()) { note.textContent = ''; return; }
     const colors = host.colors();
     const text = Array.from(run.indices.subarray(0, n), index => vocabulary[index]);
     const inside = insideQuotation(text);

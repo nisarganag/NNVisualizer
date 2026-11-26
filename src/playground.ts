@@ -27,9 +27,13 @@ import {
   optimizers,
   decodePoints,
   encodePoints,
-  MAX_DRAWN_POINTS
+  decodeValuedPoints,
+  encodeValuedPoints,
+  MAX_DRAWN_POINTS,
+  type DrawnPoint
 } from "./state";
 import {Example2D, shuffle} from "./dataset";
+import { CsvFormatError, MAX_CSV_BYTES, parseDatasetCsv, sampleDatasetCsv } from './csv-data';
 import {AppendingLineChart} from "./linechart";
 import * as d3 from 'd3';
 import seedrandom from 'seedrandom';
@@ -183,6 +187,9 @@ let gradients = new Map<string, number>();
 let waveAfterStep = false;
 /** What a click on the plot places when drawing a dataset: 1 violet, -1 amber, 0 erase. */
 let paintLabel = 1;
+/** Drawing regression data: the value a click places, or erasing instead. */
+let paintValue = .5;
+let paintErase = false;
 const trainingWorker = new Worker(new URL('./training.worker.ts', import.meta.url), { type: 'module' });
 
 /** Info messages appear only if work takes noticeable time; errors appear at once. */
@@ -330,11 +337,49 @@ function makeGUI() {
     paintLabel = Number(this.dataset.paint);
     d3.selectAll('#paint-controls [data-paint]').attr('aria-checked', function() { return String(Number(this.dataset.paint) === paintLabel); });
   });
+  // Drawing regression data: the value new points get, or erase.
+  const valueInput = document.querySelector<HTMLInputElement>('#paint-value');
+  const syncPaintValue = () => {
+    paintValue = Number(valueInput.value);
+    d3.select('#paint-value-text').text(paintValue.toFixed(1));
+    d3.select('#paint-value-swatch').style('background', colorScale(paintValue));
+  };
+  valueInput.addEventListener('input', () => {
+    syncPaintValue();
+    // Choosing a value means placing points with it.
+    setValuePaint(false);
+  });
+  syncPaintValue();
+  const setValuePaint = (erase: boolean) => {
+    paintErase = erase;
+    d3.selectAll('[data-value-paint]').attr('aria-checked', function() { return String((this.dataset.valuePaint === 'erase') === erase); });
+  };
+  d3.selectAll('[data-value-paint]').on('click', function() { setValuePaint(this.dataset.valuePaint === 'erase'); });
   d3.select('#clear-points').on('click', () => {
-    state.points = encodePoints([]);
+    storeDrawnPoints([]);
     updateDrawnData();
+    showCsvMessage('');
   });
   document.querySelector('#heatmap').addEventListener('click', event => placePoint(event as MouseEvent));
+
+  // Your own data from a CSV file, and a sample file that shows the format.
+  const csvFile = document.querySelector<HTMLInputElement>('#csv-file');
+  d3.select('#csv-upload').on('click', () => csvFile.click());
+  csvFile.addEventListener('change', () => {
+    const file = csvFile.files?.[0];
+    // Cleared, so choosing the same file again (after fixing it) loads it again.
+    csvFile.value = '';
+    if (file) void loadCsvFile(file);
+  });
+  d3.select('#csv-sample').on('click', () => {
+    const regression = state.problem === Problem.REGRESSION;
+    const url = URL.createObjectURL(new Blob([sampleDatasetCsv({ regression })], { type: 'text/csv' }));
+    const link = Object.assign(document.createElement('a'), { href: url, download: regression ? 'playground-regression-sample.csv' : 'playground-sample.csv' });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
 
   let optimizerSelect = d3.select('#optimizer').on('change', function() {
     state.optimizer = optimizers[this.value];
@@ -360,6 +405,7 @@ function makeGUI() {
     dataThumbnails.classed("selected", false);
     d3.select(this).classed("selected", true);
     generateData();
+    showCsvMessage('');
 
     reset();
   });
@@ -379,6 +425,7 @@ function makeGUI() {
     regDataThumbnails.classed("selected", false);
     d3.select(this).classed("selected", true);
     generateData();
+    showCsvMessage('');
 
     reset();
   });
@@ -1244,11 +1291,62 @@ function initTutorial() {
 /** Thumbnail samples, kept so a theme change can repaint without drawing new random data. */
 const thumbnailSamples = new Map<HTMLCanvasElement, Example2D[]>();
 
-const isDrawing = () => state.problem === Problem.CLASSIFICATION && state.dataset === datasets.custom;
+const isDrawing = () => (state.problem === Problem.CLASSIFICATION
+  ? state.dataset === datasets.custom : state.regDataset === regDatasets['reg-custom']);
+/** The current problem's hand-drawn points: classes for classification, values for regression. */
+const drawnPoints = () => (state.problem === Problem.REGRESSION ? decodeValuedPoints(state.regPoints) : decodePoints(state.points));
+function storeDrawnPoints(points: DrawnPoint[]): void {
+  if (state.problem === Problem.REGRESSION) state.regPoints = encodeValuedPoints(points);
+  else state.points = encodePoints(points);
+}
+
+/** Says how an uploaded file went: what was loaded, or what to fix. An empty text hides it. */
+function showCsvMessage(text: string, kind: 'info' | 'error' = 'info'): void {
+  const element = document.querySelector<HTMLElement>('#csv-message');
+  element.textContent = text;
+  element.dataset.kind = kind;
+  element.hidden = !text;
+}
+
+/** A CSV file becomes the hand-drawn dataset, on a fresh network; a bad file leaves everything as it was. */
+async function loadCsvFile(file: File): Promise<void> {
+  if (file.size > MAX_CSV_BYTES) {
+    showCsvMessage(`${file.name} is ${(file.size / 1e6).toFixed(1)} MB. Files up to 1 MB can be read.`, 'error');
+    return;
+  }
+  const regression = state.problem === Problem.REGRESSION;
+  let points: DrawnPoint[];
+  let notes: string[];
+  try {
+    ({ points, notes } = parseDatasetCsv(await file.text(), { regression }));
+  } catch (error) {
+    if (!(error instanceof CsvFormatError)) throw error;
+    showCsvMessage(`${file.name} can’t be used. ${error.message}`, 'error');
+    return;
+  }
+  // The file becomes this problem's hand-drawn dataset.
+  if (regression) state.regDataset = regDatasets['reg-custom'];
+  else state.dataset = datasets.custom;
+  storeDrawnPoints(points);
+  const attribute = regression ? 'data-regDataset' : 'data-dataset';
+  d3.selectAll(`canvas[${attribute}]`).classed('selected', false);
+  d3.select(`canvas[${attribute}=${regression ? 'reg-custom' : 'custom'}]`).classed('selected', true);
+  generateData();
+  reset();
+  renderDrawnThumbnail();
+  const count = `${points.length} ${points.length === 1 ? 'point' : 'points'}`;
+  showCsvMessage([`Loaded ${count} from ${file.name}. Press Run training, or click the plot to add more.`, ...notes].join(' '));
+}
 
 /** Shows the paint tools while the hand-drawn dataset is selected. */
 function syncDrawMode(): void {
   const drawing = isDrawing();
+  const regression = state.problem === Problem.REGRESSION;
+  d3.select('#csv-hint').text(regression ? 'Columns x1, x2, value: from −1 (amber) to 1 (violet).' : 'Columns x1, x2, label: 1 is violet, −1 amber.');
+  // Classification paints classes; regression paints values.
+  d3.select('#paint-hint').text(regression ? 'Click the prediction surface to place points' : 'Click the decision boundary plot to place points');
+  d3.select('.paint-classes').property('hidden', regression);
+  d3.select('.paint-values').property('hidden', !regression);
   d3.select('#paint-controls').property('hidden', !drawing);
   d3.select('#plot-hint').property('hidden', !drawing);
   d3.select('#heatmap').classed('is-drawing', drawing);
@@ -1266,8 +1364,9 @@ function placePoint(event: MouseEvent): void {
   if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
   const x = -6 + 12 * fx;
   const y = 6 - 12 * fy;
-  const points = decodePoints(state.points);
-  if (paintLabel === 0) {
+  const points = drawnPoints();
+  const regression = state.problem === Problem.REGRESSION;
+  if (regression ? paintErase : paintLabel === 0) {
     let nearest = -1;
     let best = .8 * .8;
     points.forEach((point, i) => {
@@ -1281,9 +1380,9 @@ function placePoint(event: MouseEvent): void {
       setStatus(`You can place up to ${MAX_DRAWN_POINTS} points.`, 'info');
       return;
     }
-    points.push({ x, y, label: paintLabel });
+    points.push({ x, y, label: regression ? paintValue : paintLabel });
   }
-  state.points = encodePoints(points);
+  storeDrawnPoints(points);
   updateDrawnData();
 }
 
@@ -1295,33 +1394,38 @@ function updateDrawnData(): void {
   renderDrawnThumbnail();
 }
 
+/** The hand-drawn datasets' tiles: the points placed so far, or a plus inviting the first. */
 function renderDrawnThumbnail(): void {
-  const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-dataset="custom"]');
-  if (!canvas) return;
-  const size = 112;
-  canvas.width = size;
-  canvas.height = size;
-  const context = canvas.getContext('2d');
-  context.clearRect(0, 0, size, size);
-  const points = decodePoints(state.points);
-  if (!points.length) {
-    // An empty plot invites the first point.
-    context.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--ink-3').trim() || '#888';
-    context.lineWidth = 6;
-    context.lineCap = 'round';
-    context.beginPath();
-    context.moveTo(size / 2, size * .3);
-    context.lineTo(size / 2, size * .7);
-    context.moveTo(size * .3, size / 2);
-    context.lineTo(size * .7, size / 2);
-    context.stroke();
+  const tiles = [
+    ['canvas[data-dataset="custom"]', decodePoints(state.points)],
+    ['canvas[data-regDataset="reg-custom"]', decodeValuedPoints(state.regPoints)],
+  ] as const;
+  for (const [selector, points] of tiles) {
+    const canvas = document.querySelector<HTMLCanvasElement>(selector);
+    if (!canvas) continue;
+    const size = 112;
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext('2d');
+    context.clearRect(0, 0, size, size);
+    if (!points.length) {
+      context.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--ink-3').trim() || '#888';
+      context.lineWidth = 6;
+      context.lineCap = 'round';
+      context.beginPath();
+      context.moveTo(size / 2, size * .3);
+      context.lineTo(size / 2, size * .7);
+      context.moveTo(size * .3, size / 2);
+      context.lineTo(size * .7, size / 2);
+      context.stroke();
+    }
+    points.forEach(point => {
+      context.fillStyle = colorScale(point.label);
+      context.beginPath();
+      context.arc(size * (point.x + 6) / 12, size * (6 - point.y) / 12, 5, 0, 2 * Math.PI);
+      context.fill();
+    });
   }
-  points.forEach(point => {
-    context.fillStyle = colorScale(point.label);
-    context.beginPath();
-    context.arc(size * (point.x + 6) / 12, size * (6 - point.y) / 12, 5, 0, 2 * Math.PI);
-    context.fill();
-  });
 }
 
 function drawDatasetThumbnails(reuseSamples = false) {
@@ -1365,6 +1469,11 @@ function drawDatasetThumbnails(reuseSamples = false) {
     for (let regDataset in regDatasets) {
       let canvas: any =
           document.querySelector(`canvas[data-regDataset=${regDataset}]`);
+      if (regDataset === 'reg-custom') {
+        renderDrawnThumbnail();
+        d3.select(canvas.parentNode as Element).style("display", null);
+        continue;
+      }
       let dataGenerator = regDatasets[regDataset];
       renderThumbnail(canvas, dataGenerator);
     }
@@ -1406,7 +1515,7 @@ function generateData(firstTime = false) {
   seedrandom(state.seed, { global: true });
   syncDrawMode();
   if (isDrawing()) {
-    const points = decodePoints(state.points);
+    const points = drawnPoints();
     // A fixed, evenly spread assignment keeps each point in the same set as more are added.
     const isTest = (i: number) => (i * 0.6180339887498949) % 1 >= state.percTrainData / 100;
     trainData = points.filter((_point, i) => !isTest(i));

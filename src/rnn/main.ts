@@ -7,6 +7,7 @@ import { signalRange, THEME_CHANGE_EVENT } from '../palette';
 import { applySampling, sample, type SamplingResult, type SamplingSettings } from '../transformer/sampling';
 import { CharLstmRun, encodeText, parseCharLstm, spanReach, type CharLstm, type CharLstmMeta } from './model';
 import { createGates, type Gates } from './gates';
+import { IN_WORD, LETTER, languageFrom } from './languages';
 import {
   NEARLY_CERTAIN, SPAN_REACH, characterName, characters, correlationText, glyph, paintSpanBars, percent, prepareCanvas, surpriseLevel,
   type ChartColors,
@@ -14,7 +15,8 @@ import {
 
 initializeSite();
 
-const MODEL_BASE = '/models/char-lstm-v1';
+/** English or Hindi, from the address; each has its own networks. */
+const language = languageFrom(location.search);
 /** The longest text the page reads; generation stops there. */
 const MAX_CHARACTERS = 400;
 /** Characters one press of Generate adds. */
@@ -31,6 +33,7 @@ const GENERATE_TOP = 5;
 const MARK_NAMES: Record<string, string> = {
   ' ': 'space', '\n': 'new paragraph', ',': 'comma', '.': 'period', '"': 'quote', "'": 'apostrophe',
   '!': 'exclamation', '?': 'question mark', ';': 'semicolon', ':': 'colon', '-': 'dash', '(': 'open bracket', ')': 'close bracket',
+  ...language.marks,
 };
 
 type Detail = 'hidden' | 'input' | 'forget' | 'output';
@@ -141,7 +144,7 @@ const prefixKey = (t: number) => Array.from(run.indices.subarray(0, t + 1)).join
 /** The letters of the word being written at step t (empty after a space or punctuation). */
 function wordBefore(t: number): string {
   let word = '';
-  for (let s = t; s >= 0 && /[A-Za-z']/.test(model.vocabulary[run.indices[s]]); s--) word = model.vocabulary[run.indices[s]] + word;
+  for (let s = t; s >= 0 && IN_WORD.test(model.vocabulary[run.indices[s]]); s--) word = model.vocabulary[run.indices[s]] + word;
   return word.replace(/^'+/, '');
 }
 
@@ -409,15 +412,15 @@ function renderCandidates() {
     text.setAttribute('aria-label', characterName(character));
     const preview = item.querySelector<HTMLElement>('.candidate-word');
     // Unlikely letters lead to made-up words, which say little; only plausible ones get a preview.
-    if (/[A-Za-z]/.test(character) && result.scaled[id] >= .01) {
+    if (LETTER.test(character) && result.scaled[id] >= .01) {
       if (!previews.words.has(id)) previews.words.set(id, run.completeWord(t, id).map(index => model.vocabulary[index]).join(''));
       preview.replaceChildren(Object.assign(document.createElement('span'), { className: 'known', textContent: written }), previews.words.get(id));
       preview.title = `${written}${previews.words.get(id)}`;
     } else {
-      preview.replaceChildren(/[A-Za-z]/.test(character) ? '' : MARK_NAMES[character] ?? '');
+      preview.replaceChildren(LETTER.test(character) ? '' : MARK_NAMES[character] ?? '');
       preview.title = '';
     }
-    preview.classList.toggle('is-mark', !/[A-Za-z]/.test(character));
+    preview.classList.toggle('is-mark', !LETTER.test(character));
     item.querySelector<HTMLElement>('.candidate-bar i').style.width = `${(result.scaled[id] / max) * 100}%`;
     item.querySelector('.candidate-value').textContent = percent(result.scaled[id]);
     item.classList.toggle('is-actual', id === actual);
@@ -454,8 +457,8 @@ function renderScore() {
     for (let v = 0; v < V; v++) if (run.probabilities[offset + v] > run.probabilities[offset + actual]) rank++;
     if (rank === 0) first++;
     if (rank < 3) three++;
-    if (/[A-Za-z]/.test(model.vocabulary[actual])) {
-      const kind = /[A-Za-z']/.test(model.vocabulary[run.indices[t]]) ? kinds.inside : kinds.start;
+    if (LETTER.test(model.vocabulary[actual])) {
+      const kind = IN_WORD.test(model.vocabulary[run.indices[t]]) ? kinds.inside : kinds.start;
       kind[0]++;
       if (rank === 0) kind[1]++;
     }
@@ -794,16 +797,40 @@ function renderCellPicks(meta: CharLstmMeta) {
   }));
 }
 
+/* ---------- Language ---------- */
+
+/** The switch shows which networks are loaded; in Hindi, the texts and credits are Hindi's. */
+function applyLanguage() {
+  document.querySelectorAll<HTMLAnchorElement>('[data-language]').forEach(link => {
+    if (link.dataset.language === language.code) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  });
+  if (language.code === 'en') return;
+  document.body.dataset.language = language.code;
+  // Text in the page's own language, so it gets a Devanagari font and is read out as Hindi.
+  for (const id of ['prompt-input', 'char-cells', 'candidate-list', 'next-context', 'gates-lstm-chars', 'gates-rnn-chars', 'continue-results']) {
+    $(id)?.setAttribute('lang', language.code);
+  }
+  $('rnn-intro').textContent = language.intro;
+  promptInput.value = language.text;
+  const select = $<HTMLSelectElement>('example-select');
+  select.replaceChildren(new Option('Choose…', ''), ...language.examples.map(text => new Option(text, text)));
+  $('model-credits').innerHTML = language.credits
+    .replace('{lstm-bits}', '<span id="validation-bits" class="readout">about 2</span>')
+    .replace('{rnn-bits}', '<span id="gates-validation-bits" class="readout">about 2</span>');
+}
+applyLanguage();
+
 /* ---------- Loading ---------- */
 
 async function initialize() {
   try {
     const [meta, weights] = await Promise.all([
-      fetch(`${MODEL_BASE}.json`).then(response => {
+      fetch(`${language.lstm}.json`).then(response => {
         if (!response.ok) throw new Error(`${response.status}`);
         return response.json() as Promise<CharLstmMeta>;
       }),
-      fetch(`${MODEL_BASE}.bin`).then(response => {
+      fetch(`${language.lstm}.bin`).then(response => {
         if (!response.ok) throw new Error(`${response.status}`);
         return response.arrayBuffer();
       }),
@@ -820,7 +847,7 @@ async function initialize() {
     $('validation-bits').textContent = meta.validationBitsPerChar.toFixed(2);
     workbench.setAttribute('aria-busy', 'false');
     update({ fresh: true });
-    gates = createGates({ run, meta, focusStep, chooseStep, lstmSpan, colors: () => colors, settings });
+    gates = createGates({ run, meta, focusStep, chooseStep, lstmSpan, colors: () => colors, settings, modelBase: language.rnn });
   } catch {
     setStatus('The network could not load. Reload the page to try again.');
     // The comparison needs the LSTM too.

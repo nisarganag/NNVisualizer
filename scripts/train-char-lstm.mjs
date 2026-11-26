@@ -6,13 +6,20 @@
  * Usage:
  *   node scripts/train-char-lstm.mjs <corpus-dir> <output-dir> [options]
  *     --cell C         lstm (default) or rnn, the gateless network
+ *     --language L     en (default) or hi, the Hindi networks (see "Hindi" below)
  *     --hidden N       memory cells or hidden units (default 256 for lstm, 512 for rnn)
- *     --output-name S  file name without extension (default char-lstm-v1, char-rnn-v1)
+ *     --output-name S  file name without extension (default char-lstm-v1, char-rnn-v1,
+ *                      and char-lstm-hi-v1, char-rnn-hi-v1 for Hindi)
  *     --epochs N       training epochs (default 8)
  *     --seed N         PRNG seed (default 20261119)
  *     --workers N      worker threads (default: all cores); results do not depend on it
- *     --corpus-only    write the normalized training and held-out text to <output-dir>
- *                      (corpus-train.txt, corpus-held-out.txt) and stop
+ *     --corpus-only    write the normalized training and held-out text and the vocabulary
+ *                      to <output-dir> (corpus-train.txt, corpus-held-out.txt,
+ *                      corpus-vocabulary.json) and stop
+ *     --import F.bin   export a model trained elsewhere on the same corpus instead of
+ *                      training here: scripts/train-char-lstm-gpu.py trains on a Mac's GPU
+ *                      from the --corpus-only files, and this measures and exports its
+ *                      weights exactly as after training on the CPU (see importTrained)
  *     --analyze        read the exported model in <output-dir> instead of training, and
  *                      write its held-out reference statistics (see heldOutReference)
  *                      into its .json; the .bin is only read
@@ -39,6 +46,19 @@
  * vocabulary is the letters plus the digits and common punctuation in ALLOWED that
  * occur at least MIN_COUNT times. The last 5% of each book (from a paragraph boundary)
  * is held out for validation and never trained on.
+ *
+ * Hindi (--language hi): <corpus-dir> holds the nineteen public-domain Hindi books in
+ * scripts/hindi-books.mjs as scripts/fetch-hindi-books.mjs writes them from Hindi
+ * Wikisource, one paragraph per line (<slug>.txt). The same steps apply, with Hindi's
+ * own: a pipe or double danda becomes a danda, joiners are dropped, simplifyCharacters
+ * splits the nukta off precomposed letters, headings are found by length and their
+ * opening words (isHindiFrontMatter), paragraphs with caste, communal or gendered slurs
+ * are dropped (HINDI.offensive), and the letters are the Devanagari letters and signs
+ * that occur at least MIN_COUNT times, plus the danda among the punctuation. The short
+ * folk tales are allowed smaller training and held-out parts (HINDI.minimumTrain). The
+ * shipped Hindi networks were trained on an M4's GPU by scripts/train-char-lstm-gpu.py
+ * from this script's --corpus-only files (8 epochs each: 29 minutes for the LSTM, 19 for
+ * the gateless network) and exported with --import.
  *
  * Model (src/rnn/model.ts): one-hot characters into one LSTM layer of 256 cells, gates
  * in the order input, forget, cell candidate, output, and a softmax over the vocabulary.
@@ -88,6 +108,7 @@ import {
   parameterCount, parseCharLstm, parseCharRnn, readout, rnnBitsPerCharacter, rnnCell, rnnParameterCount, rnnTensorLayout,
   simplifyCharacters, softmaxInto, spanReach, tensorLayout,
 } from '../src/rnn/model.ts';
+import { HINDI_BOOKS } from './hindi-books.mjs';
 
 // ---------------------------------------------------------------------------------
 // Corpus
@@ -124,6 +145,32 @@ const ALLOWED = /^[ \n!"'(),\-.:;?]$/;
  */
 const OFFENSIVE = /\b(nigg\w*|negro\w*|darkey\w*|darky|darkies|injuns?|redskins?|piccaninn\w*|pickaninn\w*|squaws?|coolies?|chinam[ae]n|chinks?|japs?|kikes?|wops?|jews?|jewess|gypsy|gypsies|gipsy|gipsies|savages?|half-breeds?|mulattos?|blackamoors?)\b/i;
 const VALIDATION_SHARE = 0.05;
+
+/**
+ * The Hindi corpus (--language hi): the books in scripts/hindi-books.mjs, as written by
+ * scripts/fetch-hindi-books.mjs, one paragraph per line. Devanagari letters and signs
+ * that occur at least MIN_COUNT times are the letters; the danda ends sentences.
+ */
+const HINDI = {
+  /** Characters besides Devanagari letters and signs the model may learn, if common enough. */
+  allowed: /^[ \n!"'(),\-.:;?।]$/,
+  letter: c => /[ऀ-ॣॱ-ॿ]/.test(c),
+  /** Pipes and double dandas, as some transcriptions write a danda, and joiners that only shape glyphs. */
+  replacements: [[/[|॥]/g, '।'], [/[‌‍]/g, '']],
+  /**
+   * Caste, communal and gendered slurs and insults some of these books use in dialogue,
+   * which the page must never write: every paragraph containing one (or an inflection
+   * of one) is dropped before training.
+   */
+  offensive: ['चमार', 'भंगी', 'भंगिन', 'भंगियों', 'मेहतर', 'डोम', 'अछूत', 'चांडाल', 'चाण्डाल', 'चण्डाल', 'म्लेच्छ', 'मलेच्छ',
+    'काफ़िर', 'काफिर', 'कटुआ', 'कटुए', 'रंडी', 'रण्डी', 'छिनाल', 'कुलटा', 'वेश्या', 'हरामज़ाद', 'हरामजाद', 'हरामी'],
+  /** Opening words of chapter headings: "पहला बयान", "प्रकरण १", "अंक दूसरा". */
+  headings: /^(?:अध्याय|प्रकरण|बयान|भाग|खण्ड|खंड|अंक|अङ्क|दृश्य|परिच्छेद|सर्ग|पहला|दूसरा|तीसरा|चौथा|पाँचवाँ|पांचवां)(?=[\s०-९\d.।]|$)/,
+  minimumTrain: 10_000,
+  minimumHeldOut: 400,
+};
+/** Each offensive term at the start of a word, in the corpus's spelling (simplifyCharacters splits off the nukta). */
+const OFFENSIVE_HI = new RegExp(`(?<![\\u0900-\\u097F])(?:${HINDI.offensive.map(word => simplifyCharacters(word)).join('|')})`);
 
 // ---------------------------------------------------------------------------------
 // Model and training configuration
@@ -528,13 +575,17 @@ function workerMain({ shared, vocabulary, workerCount, cellName, hidden }) {
 
 function parseArguments(argv) {
   const positional = [];
-  const options = { ...DEFAULTS, checkGradients: false, corpusOnly: false, analyze: false };
+  const options = { ...DEFAULTS, language: 'en', checkGradients: false, corpusOnly: false, analyze: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--check-gradients') options.checkGradients = true;
     else if (arg === '--corpus-only') options.corpusOnly = true;
     else if (arg === '--analyze') options.analyze = true;
-    else if (arg === '--cell') {
+    else if (arg === '--import') options.importPath = argv[++i];
+    else if (arg === '--language') {
+      options.language = argv[++i];
+      if (!['en', 'hi'].includes(options.language)) throw new Error('--language needs en or hi');
+    } else if (arg === '--cell') {
       options.cell = argv[++i];
       if (!Object.hasOwn(CELLS, options.cell)) throw new Error(`--cell needs one of ${Object.keys(CELLS).join(', ')}`);
     } else if (arg === '--output-name') {
@@ -551,7 +602,8 @@ function parseArguments(argv) {
   options.workers = Math.max(1, options.workers);
   options.epochs = Math.max(1, options.epochs);
   options.hidden = Math.max(1, options.hidden ?? CELLS[options.cell].hidden);
-  options.outputName ??= CELLS[options.cell].outputName;
+  // The Hindi networks: char-lstm-hi-v1 and char-rnn-hi-v1.
+  options.outputName ??= options.language === 'hi' ? CELLS[options.cell].outputName.replace(/-v1$/, '-hi-v1') : CELLS[options.cell].outputName;
   return options;
 }
 
@@ -594,17 +646,51 @@ function isFrontMatter(paragraph) {
   return /^(?:produced by|transcriber|e-?text|this e-?book|contents\b|illustrated by|copyright|author of|end of (?:the )?project gutenberg)/i.test(paragraph);
 }
 
+/** One Hindi book as normalized paragraphs, from the plain text scripts/fetch-hindi-books.mjs wrote. */
+function readHindiBook(dir, book) {
+  const path = join(dir, `${book.slug}.txt`);
+  if (!existsSync(path)) throw new Error(`Missing ${path}; run scripts/fetch-hindi-books.mjs ${dir} first.`);
+  if (statSync(path).size > 3 * MAX_FILE_BYTES) throw new Error(`${path} is unexpectedly large`);
+  const bytes = readFileSync(path);
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/\r\n?/g, '\n');
+  let offensive = 0;
+  // A short paragraph with a double danda is a couplet (a doha or chaupai), left out like the verse blocks the
+  // fetch drops. Prose that quotes a couplet, or that ends its sentences with a double danda, is kept.
+  const prose = text.split('\n').filter(paragraph => !(paragraph.includes('॥') && paragraph.length < 300));
+  const paragraphs = prose.map(paragraph => HINDI.replacements.reduce((out, [pattern, replacement]) => out.replace(pattern, replacement), paragraph))
+    .map(paragraph => simplifyCharacters(paragraph).replace(/\s+/g, ' ').trim())
+    .filter(paragraph => paragraph && !isHindiFrontMatter(paragraph))
+    .filter(paragraph => {
+      if (!OFFENSIVE_HI.test(paragraph)) return true;
+      offensive++;
+      return false;
+    });
+  return { ...book, sha256, paragraphs, offensive };
+}
+
+/** Hindi paragraphs that are headings, numbers or titles rather than prose. */
+function isHindiFrontMatter(paragraph) {
+  const letters = Array.from(paragraph).filter(HINDI.letter).length;
+  if (letters < paragraph.length / 2) return true; // page numbers, Latin, symbols
+  if (HINDI.headings.test(paragraph) && paragraph.length < 60) return true; // "पहला बयान", "प्रकरण १"
+  return paragraph.length < 40 && !/[।?!"')]$/.test(paragraph); // titles: "पंच परमेश्वर"
+}
+
 /** Normalized books, the vocabulary, and each book split into training and held-out text. */
-function loadCorpus(dir) {
-  const books = BOOKS.map(book => readBook(dir, book));
+function loadCorpus(dir, language = 'en') {
+  const hindi = language === 'hi';
+  const books = hindi ? HINDI_BOOKS.map(book => readHindiBook(dir, book)) : BOOKS.map(book => readBook(dir, book));
   const counts = new Map();
   for (const book of books) {
     for (const paragraph of book.paragraphs) for (const c of paragraph) counts.set(c, (counts.get(c) ?? 0) + 1);
   }
   counts.set('\n', books.reduce((n, book) => n + book.paragraphs.length, 0));
-  const printable = c => c === '\n' || (c >= ' ' && c <= '~');
-  const letter = c => /[A-Za-z]/.test(c);
-  const vocabulary = [...counts.keys()].filter(c => printable(c) && (letter(c) || (ALLOWED.test(c) && counts.get(c) >= MIN_COUNT))).sort();
+  const printable = c => c === '\n' || (c >= ' ' && c <= '~') || (hindi && HINDI.letter(c)) || (hindi && c === '।');
+  // English letters are always kept; Devanagari ones only when common, which leaves out rare signs and stray marks.
+  const letter = hindi ? c => HINDI.letter(c) && counts.get(c) >= MIN_COUNT : c => /[A-Za-z]/.test(c);
+  const allowed = hindi ? HINDI.allowed : ALLOWED;
+  const vocabulary = [...counts.keys()].filter(c => printable(c) && (letter(c) || (allowed.test(c) && counts.get(c) >= MIN_COUNT))).sort();
   const removed = [...counts.entries()].filter(([c]) => !vocabulary.includes(c)).sort((a, b) => b[1] - a[1]);
   const keep = new Set(vocabulary);
   for (const book of books) {
@@ -618,7 +704,9 @@ function loadCorpus(dir) {
     }
     book.train = book.paragraphs.slice(0, split).join('\n');
     book.validation = book.paragraphs.slice(split).join('\n');
-    if (book.train.length < 50_000 || book.validation.length < 2_000) throw new Error(`${book.title}: unexpectedly short text`);
+    // Some Hindi folk tales are short books.
+    const [minimumTrain, minimumHeldOut] = hindi ? [HINDI.minimumTrain, HINDI.minimumHeldOut] : [50_000, 2_000];
+    if (book.train.length < minimumTrain || book.validation.length < minimumHeldOut) throw new Error(`${book.title}: unexpectedly short text`);
   }
   return { books, vocabulary, removed };
 }
@@ -688,7 +776,7 @@ async function train(options) {
   const startTime = performance.now();
   const cell = CELLS[options.cell];
   const HIDDEN = options.hidden;
-  const { books, vocabulary, removed } = loadCorpus(options.corpusDir);
+  const { books, vocabulary, removed } = loadCorpus(options.corpusDir, options.language);
   const lookup = new Map(vocabulary.map((c, i) => [c, i]));
   const V = vocabulary.length;
   const PARAMS = cell.parameterCount(V, HIDDEN);
@@ -708,6 +796,7 @@ async function train(options) {
     mkdirSync(options.outDir, { recursive: true });
     writeFileSync(join(options.outDir, 'corpus-train.txt'), trainText);
     writeFileSync(join(options.outDir, 'corpus-held-out.txt'), books.map(book => book.validation).join('\n\n'));
+    writeFileSync(join(options.outDir, 'corpus-vocabulary.json'), JSON.stringify(vocabulary));
     console.log(`Wrote the normalized text to ${options.outDir}`);
     return;
   }
@@ -906,7 +995,7 @@ function textFeatures(text) {
     if (c === '"') quote = 1 - quote;
     if (c === '(') parenthesis = 1;
     if (c === ')') parenthesis = 0;
-    word = /[A-Za-z']/.test(c) ? word + 1 : 0;
+    word = /[\p{L}\p{M}']/u.test(c) ? word + 1 : 0; // a Devanagari vowel sign is part of its word
     paragraph = c === '\n' ? 0 : paragraph + 1;
     if (c === '\n') { quote = 0; parenthesis = 0; }
     features.quote.push(quote);
@@ -1048,7 +1137,7 @@ function logReference(cell, { accuracy, memorySpan }) {
 }
 
 /** Writes the binary and metadata, then re-reads them and measures held-out bits per character with model.ts. */
-function exportModel(options, cell, corpus, best, history, trainSeconds) {
+function exportModel(options, cell, corpus, best, history, trainSeconds, trainedOn = {}) {
   const { books, vocabulary, validationIndices } = corpus;
   const V = vocabulary.length;
   const H = options.hidden;
@@ -1065,7 +1154,8 @@ function exportModel(options, cell, corpus, best, history, trainSeconds) {
     ...(cell === CELLS.lstm ? { gateOrder: [...GATE_ORDER] } : {}),
     parameters: cell.parameterCount(V, H),
     tensors: cell.layout(V, H),
-    corpus: books.map(({ title, author, gutenbergId }) => ({ title, author, gutenbergId })),
+    ...(options.language === 'hi' ? { language: 'hi' } : {}),
+    corpus: books.map(({ title, author, gutenbergId, page, year }) => (gutenbergId ? { title, author, gutenbergId } : { title, author, year, wikisource: page })),
     validationBitsPerChar: 0,
   };
   const model = cell.parse(draft, toArrayBuffer(readFileSync(weightsPath)));
@@ -1097,9 +1187,10 @@ function exportModel(options, cell, corpus, best, history, trainSeconds) {
       ...(cell === CELLS.rnn ? { warmupSteps: WARMUP_STEPS, recurrentInitialization: `orthogonal, gain ${RNN_RECURRENT_GAIN}` } : {}),
       seed: options.seed,
       seconds: Math.round(trainSeconds),
+      ...trainedOn,
       history,
     },
-    sources: books.map(({ gutenbergId, sha256 }) => ({ gutenbergId, sha256 })),
+    sources: books.map(({ gutenbergId, slug, sha256 }) => (gutenbergId ? { gutenbergId, sha256 } : { file: `${slug}.txt`, sha256 })),
     notableCells: cells,
     reference,
   };
@@ -1112,12 +1203,45 @@ function exportModel(options, cell, corpus, best, history, trainSeconds) {
   for (const notable of cells) console.log(`${cell.unit} ${notable.cell + 1} follows "${notable.description}" (r = ${notable.correlation})`);
   logReference(cell, reference);
   const random = mulberry32(options.seed + 1);
-  for (const prompt of ['Alice was beginning to', '"Where are you going?" asked the', 'Peter']) {
+  const prompts = options.language === 'hi' ? ['एक दिन राजा ने', '"तुम कहाँ जा रहे हो?" उसने', 'चन्द्रकान्ता'] : ['Alice was beginning to', '"Where are you going?" asked the', 'Peter'];
+  for (const prompt of prompts.map(text => Array.from(simplifyCharacters(text)).filter(c => model.lookup.has(c)).join(''))) {
     console.log(`\nGreedy: ${JSON.stringify(continueText(cell, model, prompt, 120, 0, random))}`);
     console.log(`T=0.8:  ${JSON.stringify(continueText(cell, model, prompt, 120, 0.8, random))}`);
   }
   console.log(`\nWrote ${weightsPath} (${statSync(weightsPath).size} bytes) and ${metaPath}`);
   console.log(`Training time ${trainSeconds.toFixed(0)} s.`);
+}
+
+/**
+ * --import <file.bin>: exports a model trained elsewhere on the same corpus, such as by
+ * scripts/train-char-lstm-gpu.py on a Mac's GPU, exactly as after training here: its
+ * parameters (little-endian float32 in this layout) and <file>-history.json (epochs,
+ * best epoch, scores per epoch, seconds) are read, and the held-out score, notable
+ * cells and reference statistics are measured with src/rnn/model.ts. The held-out score
+ * must agree with the trainer's own to a hundredth of a bit.
+ */
+function importTrained(options) {
+  const cell = CELLS[options.cell];
+  const { books, vocabulary } = loadCorpus(options.corpusDir, options.language);
+  const lookup = new Map(vocabulary.map((c, i) => [c, i]));
+  const trainIndices = encode(books.map(book => book.train).join('\n'), lookup);
+  const validationIndices = books.map(book => encode(book.validation, lookup));
+  const bytes = readFileSync(options.importPath);
+  const count = cell.parameterCount(vocabulary.length, options.hidden);
+  if (bytes.length !== count * 4) throw new Error(`${options.importPath} holds ${bytes.length / 4} values, not the ${count} of a ${options.cell} with ${options.hidden} units`);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const params = Float32Array.from({ length: count }, (_, i) => view.getFloat32(i * 4, true));
+  const record = JSON.parse(readFileSync(options.importPath.replace(/\.bin$/, '-history.json'), 'utf8'));
+  const recorded = record.history.find(entry => entry.epoch === record.bestEpoch).validationBits;
+  options.epochs = record.epochs;
+  options.seed = record.seed;
+  exportModel(options, cell, { books, vocabulary, validationIndices, trainIndices }, { params, epoch: record.bestEpoch }, record.history, record.seconds,
+    { device: record.device, script: 'scripts/train-char-lstm-gpu.py' });
+  const exported = JSON.parse(readFileSync(join(options.outDir, `${options.outputName}.json`), 'utf8'));
+  if (Math.abs(exported.validationBitsPerChar - recorded) > 0.01) {
+    throw new Error(`The page's code scores the held-out text at ${exported.validationBitsPerChar} bits per character, the trainer at ${recorded}`);
+  }
+  console.log(`The held-out score matches the GPU trainer's (${recorded}).`);
 }
 
 /**
@@ -1131,7 +1255,7 @@ function analyze(options) {
   const weightsPath = join(options.outDir, `${options.outputName}.bin`);
   const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
   const model = cell.parse(meta, toArrayBuffer(readFileSync(weightsPath)));
-  const { books, vocabulary } = loadCorpus(options.corpusDir);
+  const { books, vocabulary } = loadCorpus(options.corpusDir, options.language);
   if (vocabulary.join('') !== meta.vocabulary) throw new Error(`${metaPath} has a different vocabulary from the corpus`);
   const { reference, bits } = heldOutReference(cell, model, books.map(book => book.validation));
   if (!(Math.abs(bits - meta.validationBitsPerChar) <= 1e-4)) {
@@ -1198,8 +1322,9 @@ if (isMainThread) {
     if (options.checkGradients) checkGradients(options.cell);
     else if (!options.corpusDir || !options.outDir) {
       throw new Error('Usage: node scripts/train-char-lstm.mjs <corpus-dir> <output-dir> [--cell lstm|rnn] [--hidden N] [--output-name S] '
-        + '[--epochs N] [--seed N] [--workers N] [--corpus-only | --analyze] | --check-gradients [--cell lstm|rnn]');
+        + '[--epochs N] [--seed N] [--workers N] [--corpus-only | --analyze | --import <file.bin>] | --check-gradients [--cell lstm|rnn]');
     } else if (options.analyze) analyze(options);
+    else if (options.importPath) importTrained(options);
     else await train(options);
   } catch (error) {
     console.error(error.message);

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { languageFrom } from '../../src/rnn/languages';
 
 const pageErrors = new WeakMap<Page, string[]>();
 test.beforeEach(({ page }) => {
@@ -296,6 +297,56 @@ test.describe('recurrent', () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
     expect(errors).toEqual([]);
     await context.close();
+  });
+
+  test('switches to the Hindi networks, which read Devanagari one character at a time', async ({ page }) => {
+    const hindi = languageFrom('?lang=hi');
+    const requested: string[] = [];
+    page.on('request', request => requested.push(new URL(request.url()).pathname));
+    await openPage(page);
+    await expect(page.getByRole('link', { name: 'English' })).toHaveAttribute('aria-current', 'page');
+    // Only what the Hindi page asks for.
+    requested.length = 0;
+    await page.getByRole('link', { name: 'हिन्दी' }).click();
+    await expect(page).toHaveURL(/\/rnn\/\?lang=hi$/);
+    await expect(page.locator('#rnn-workbench')).toHaveAttribute('aria-busy', 'false');
+    await expect(page.getByRole('link', { name: 'हिन्दी' })).toHaveAttribute('aria-current', 'page');
+    expect(requested).toContain('/models/char-lstm-hi-v1.bin');
+
+    // The Hindi text, every character known, one box per Unicode character: a vowel sign is its own step.
+    const prompt = page.locator('#prompt-input');
+    await expect(prompt).toHaveValue(hindi.text);
+    await expect(prompt).toHaveAttribute('lang', 'hi');
+    await expect(page.locator('#skipped-note')).toBeHidden();
+    const cells = page.locator('#char-cells .char-cell');
+    await expect(cells).toHaveCount(hindi.text.length);
+    await prompt.fill('कि');
+    await expect(cells).toHaveCount(2);
+    await expect(cells.nth(1)).toHaveText('◌ि');
+    await expect(page.locator('#rnn-intro')).toContainText('Hindi');
+    await expect(page.locator('#model-credits')).toContainText('Hindi Wikisource');
+    await expect(page.locator('#validation-bits')).toHaveText(/^\d\.\d\d$/);
+    const examples = page.locator('#example-select option');
+    await expect(examples).toHaveCount(hindi.examples.length + 1);
+
+    // Generate writes Devanagari.
+    await page.getByRole('button', { name: 'Generate' }).click();
+    await expect.poll(async () => (await prompt.inputValue()).length, { timeout: 15_000 }).toBeGreaterThan(20);
+    await page.getByRole('button', { name: 'Stop' }).click();
+    expect(await prompt.inputValue()).toMatch(/[\u0900-\u097F]/);
+
+    // The gateless network is Hindi's too.
+    const panel = page.locator('#gates-panel');
+    await panel.scrollIntoViewIfNeeded();
+    await expect(panel).toHaveAttribute('aria-busy', 'false');
+    expect(requested).toContain('/models/char-rnn-hi-v1.bin');
+    expect(requested).not.toContain('/models/char-rnn-v1.bin');
+    await expect(page.locator('#score-rnn-first')).toHaveText(/^\d+%$/);
+
+    // And back.
+    await page.getByRole('link', { name: 'English' }).click();
+    await expect(page.locator('#rnn-workbench')).toHaveAttribute('aria-busy', 'false');
+    await expect(prompt).toHaveValue(/^"Where are you going\?"/);
   });
 
   test('fits a 320 px phone without sideways scrolling', async ({ browser }) => {

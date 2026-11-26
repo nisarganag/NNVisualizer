@@ -409,6 +409,102 @@ test('a dataset can be drawn by hand, erased, shared and restored', async ({ pag
   await step(page);
 });
 
+test('a CSV file becomes a dataset: sample, upload, train, a clear error, clear and upload again', async ({ page }) => {
+  await page.goto('/');
+  await ready(page);
+  const message = page.locator('#csv-message');
+  const points = page.locator('#heatmap g.train circle, #heatmap g.test circle');
+
+  // The sample shows the format, and uploads as it is.
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Sample CSV' }).click()]);
+  expect(download.suggestedFilename()).toBe('playground-sample.csv');
+  const sample = await (await download.createReadStream()).toArray().then(chunks => Buffer.concat(chunks).toString('utf8'));
+  expect(sample.split('\n')[0]).toBe('x1,x2,label');
+  const upload = (name: string, text: string) => page.locator('#csv-file').setInputFiles({ name, mimeType: 'text/csv', buffer: Buffer.from(text) });
+  await upload('playground-sample.csv', sample);
+  await ready(page);
+  await expect(message).toHaveText(/^Loaded 80 points from playground-sample\.csv\./);
+  await expect(page.locator('canvas[data-dataset="custom"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#sample-count')).toHaveText('80');
+  await expect(page.locator('#iter-number')).toHaveText('000,000');
+  await step(page);
+
+  // A bad file says what to fix and leaves the dataset alone.
+  await upload('broken.csv', 'x1,x2,label\n1,2,1\n3,four,-1\n');
+  await expect(message).toHaveText('broken.csv can’t be used. Line 3: x2 is “four”, not a number.');
+  await expect(message).toHaveAttribute('data-kind', 'error');
+  await expect(page.locator('#sample-count')).toHaveText('80');
+
+  // Clear, then upload again: coordinates beyond the plot are rescaled onto it.
+  await page.getByRole('button', { name: 'Clear points' }).click();
+  await expect(points).toHaveCount(0);
+  await expect(message).toBeHidden();
+  await upload('wide.csv', 'x1,x2,label\n0,1,1\n50,2,-1\n100,-1,1\n');
+  await ready(page);
+  await expect(message).toHaveText('Loaded 3 points from wide.csv. Press Run training, or click the plot to add more. x1 ran from 0 to 100, so it was rescaled to fit the plot.');
+  await expect(page.locator('#sample-count')).toHaveText('3');
+
+  // Regression has its own sample, with a value column, and its own hand-drawn dataset.
+  await page.selectOption('#problem', 'regression');
+  await ready(page);
+  await expect(page.locator('#csv-hint')).toHaveText('Columns x1, x2, value: from −1 (amber) to 1 (violet).');
+  const [regressionDownload] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Sample CSV' }).click()]);
+  expect(regressionDownload.suggestedFilename()).toBe('playground-regression-sample.csv');
+  const regressionSample = await (await regressionDownload.createReadStream()).toArray().then(chunks => Buffer.concat(chunks).toString('utf8'));
+  expect(regressionSample.split('\n')[0]).toBe('x1,x2,value');
+  await upload('hill.csv', regressionSample);
+  await ready(page);
+  await expect(message).toHaveText(/^Loaded 80 points from hill\.csv\./);
+  await expect(page.locator('canvas[data-regDataset="reg-custom"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#sample-count')).toHaveText('80');
+  await step(page);
+  await upload('words.csv', 'x1,x2,value\n1,2,high\n');
+  await expect(message).toHaveText('words.csv can’t be used. Line 2: the value is “high”, not a number.');
+  // The classification upload is still there when switching back.
+  await page.selectOption('#problem', 'classification');
+  await ready(page);
+  await expect(page.locator('#sample-count')).toHaveText('3');
+});
+
+test('regression data can be drawn by hand with values, erased, shared and restored', async ({ page }) => {
+  await page.goto('/');
+  await ready(page);
+  await page.selectOption('#problem', 'regression');
+  await ready(page);
+  await page.locator('canvas[data-regDataset="reg-custom"]').click();
+  await ready(page);
+  await expect(page.locator('#paint-controls')).toBeVisible();
+  await expect(page.locator('.paint-values')).toBeVisible();
+  await expect(page.locator('.paint-classes')).toBeHidden();
+  // Measured at each click: reaching a control lower in the panel can scroll the page.
+  const at = async (x: number, y: number) => {
+    const plot = (await page.locator('#heatmap canvas').boundingBox())!;
+    return [plot.x + (x + 6) / 12 * plot.width, plot.y + (6 - y) / 12 * plot.height] as const;
+  };
+  // A ramp: high values on the right, low on the left.
+  for (const [x, value] of [[-4, '-1'], [-2, '-0.5'], [0, '0'], [2, '0.5'], [4, '1']] as const) {
+    await setRange(page, 'paint-value', value);
+    await expect(page.locator('#paint-value-text')).toHaveText(Number(value).toFixed(1));
+    await page.mouse.click(...await at(x, 1));
+  }
+  const points = page.locator('#heatmap g.train circle, #heatmap g.test circle');
+  await page.locator('label[for="show-test-data"]').click();
+  await expect(points).toHaveCount(5);
+  await expect(page.locator('#sample-count')).toHaveText('5');
+  await step(page);
+  await page.getByRole('radio', { name: 'Erase' }).click();
+  await page.mouse.click(...await at(0, 1));
+  await expect(points).toHaveCount(4);
+  const hash = new URL(page.url()).hash;
+  expect(hash).toContain('regDataset=reg-custom');
+  expect(hash).toContain('regPoints=');
+  await page.reload();
+  await ready(page);
+  await expect(points).toHaveCount(4);
+  await page.getByRole('button', { name: 'Clear points' }).click();
+  await expect(points).toHaveCount(0);
+});
+
 test('the backprop view shows how each weight is being pushed', async ({ page }) => {
   await page.goto('/');
   await ready(page);
